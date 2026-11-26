@@ -2,6 +2,13 @@
 
 **1.0 · 浏览器本地版科研投稿管理工具**
 
+## 在线体验
+
+**[打开测试网页 → huaisong-yang.github.io/dear-editor/](https://huaisong-yang.github.io/dear-editor/)**
+
+首次访问会加载公开演示资料：**用户名 `admin`，密码 `password`**。
+演示修改仅保存在你自己的浏览器，不影响其他访问者。已有账号不会被演示数据覆盖。
+
 ## 功能
 
 - 投稿流程、审稿轮次、返修和录用记录。
@@ -12,19 +19,16 @@
 
 ## 使用
 
+推荐 **[下载本地版 ZIP](https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip)**，解压后打开 `index.html`。使用同一浏览器和固定文件路径，即可持续读取本机数据。
+
 通过 GitHub Pages 的 HTTPS 地址访问，或下载完整文件夹后打开 `index.html`。
-账号、稿件等资料保存在当前浏览器；不会自动上传或跨设备同步。更换浏览器或访问地址时，需要导出、恢复个人备份。
+**每次保存自动写入本地浏览器，关闭页面后仍然保留，无需每天导出。**
+
+在“备份与设置 → 本地自动保存”中，可以选择一个本地 JSON 文件。之后保存操作会自动同步到该文件。此功能适用于支持 File System Access API 的 Chrome / Edge；浏览器重启后可能需要点击“继续自动备份”重新授权。
+
+账号、稿件不会自动上传或跨设备同步。更换浏览器或访问地址时，可用本地备份恢复。
 
 普通 HTTP 局域网地址不保证密码加密 API 可用，应使用 HTTPS。
-
-## 部署 GitHub Pages
-
-1. 上传本目录内容到仓库根目录，确保直接包含 `index.html`。
-2. 仓库 Settings → Pages → Deploy from a branch。
-3. 选择 `main` 和 `/ (root)`，保存并等待部署。
-4. 网站地址通常为 `https://用户名.github.io/dear-editor/`。
-
-无需安装依赖或执行构建。资源使用相对路径，支持项目子路径部署。
 
 ## 文件
 

@@ -1667,6 +1667,59 @@ render=function(){if(page==='circle')page='profile';return retiredSocialRender()
 renderCircle=function(){page='profile';render()};
 
 
+'use strict';
+// Optional file mirror. Browser storage remains the immediate, synchronous source of truth.
+const fileMirrors=new Map();let fileMirrorQueue=Promise.resolve();
+function mirrorDB(){return new Promise((resolve,reject)=>{const request=indexedDB.open('de-file-mirrors',1);request.onupgradeneeded=()=>request.result.createObjectStore('handles');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
+async function storeMirrorHandle(owner,handle){const db=await mirrorDB();try{await new Promise((resolve,reject)=>{const tx=db.transaction('handles','readwrite');const store=tx.objectStore('handles');if(handle)store.put(handle,owner);else store.delete(owner);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})}finally{db.close()}}
+async function readMirrorHandle(owner){const db=await mirrorDB();try{return await new Promise((resolve,reject)=>{const req=db.transaction('handles').objectStore('handles').get(owner);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}finally{db.close()}}
+function mirrorStatus(text){if($('localFileStatus'))$('localFileStatus').textContent=text}
+async function connectLocalFile(){
+ const owner=accountStore.active;
+ try{
+  const handle=await window.showSaveFilePicker({suggestedName:'DearEditor-'+profile.username+'.json',types:[{description:'Dear Editor 本地备份',accept:{'application/json':['.json']}}]});
+  if(owner!==accountStore.active||!unlocked)return;
+  const state={handle,status:'写入中…',enabled:true};fileMirrors.set(owner,state);
+  try{await storeMirrorHandle(owner,handle)}catch{state.sessionOnly=true}
+  queueLocalFile();
+ }catch(error){if(error.name!=='AbortError')mirrorStatus('未能连接文件：'+error.message)}
+}
+function queueLocalFile(){
+ const owner=accountStore.active,state=fileMirrors.get(owner);if(!state?.enabled||!unlocked)return;
+ const content=JSON.stringify(backupObject(),null,2);
+ fileMirrorQueue=fileMirrorQueue.catch(()=>{}).then(async()=>{
+  if(fileMirrors.get(owner)!==state||!state.enabled)return;
+  try{
+   const permission=await state.handle.queryPermission({mode:'readwrite'});
+   if(permission!=='granted'){state.status='需要重新授权，请点击“继续自动备份”';return}
+   const writable=await state.handle.createWritable();try{await writable.write(content);await writable.close()}catch(error){await writable.abort().catch(()=>{});throw error}
+   state.status='已同步到 '+state.handle.name+' · '+new Date().toLocaleTimeString()+(state.sessionOnly?'（本次会话）':'');
+  }catch(error){state.status='文件同步失败；数据仍已保存在浏览器：'+error.message}
+  finally{if(owner===accountStore.active)mirrorStatus(state.status)}
+ });
+ return fileMirrorQueue;
+}
+async function resumeLocalFile(){
+ const owner=accountStore.active,state=fileMirrors.get(owner);if(!state)return;
+ try{const permission=await state.handle.requestPermission({mode:'readwrite'});if(owner!==accountStore.active)return;if(permission!=='granted'){mirrorStatus('未授权写入；浏览器自动保存仍有效');return}state.enabled=true;queueLocalFile()}catch(e){mirrorStatus('无法授权：'+e.message)}
+}
+async function restoreMirrorForSettings(){
+ const owner=accountStore.active;if(fileMirrors.has(owner)){mirrorStatus(fileMirrors.get(owner).status);return}
+ try{const handle=await readMirrorHandle(owner);if(!handle||owner!==accountStore.active)return;const permission=await handle.queryPermission({mode:'readwrite'});const state={handle,enabled:permission==='granted',status:permission==='granted'?'已连接 '+handle.name:'已记住 '+handle.name+'，请点击“继续自动备份”'};fileMirrors.set(owner,state);mirrorStatus(state.status);if(state.enabled)queueLocalFile()}catch{mirrorStatus('浏览器自动保存已开启；暂不能恢复文件连接。')}
+}
+const fileMirrorWrite=writeAll;writeAll=function(...args){const saved=fileMirrorWrite(...args);if(saved)queueLocalFile();return saved};
+const fileMirrorUndo=undoLast;undoLast=function(){fileMirrorUndo();queueLocalFile()};
+const fileMirrorEnter=enterWorkspace;enterWorkspace=function(){fileMirrorEnter();restoreMirrorForSettings()};
+const fileMirrorRemove=removeCurrentAccount;removeCurrentAccount=function(){const owner=accountStore.active;fileMirrorRemove();const state=fileMirrors.get(owner);if(state)state.enabled=false;fileMirrors.delete(owner);storeMirrorHandle(owner,null).catch(()=>{})};
+const fileMirrorShell=renderShell;renderShell=function(){fileMirrorShell();const footer=document.querySelector('.aside-bottom');if(footer)footer.innerHTML=footer.innerHTML.replace(/请定期导出备份|Export backups regularly|定期的にバックアップを/g,'自动保存到本地浏览器')};
+const fileMirrorBackup=renderBackup;renderBackup=function(){
+ fileMirrorBackup();const section=document.createElement('section');section.className='panel local-file-settings';section.innerHTML=`<h2>本地自动保存</h2><p class="note">每次保存已自动写入当前浏览器，关闭页面后仍保留，无需每天导出。还可以选择一个本地 JSON 文件，让后续保存自动同步到文件。</p><p id="localFileStatus" role="status">浏览器自动保存已开启</p><div class="actions" style="margin-top:16px">${window.showSaveFilePicker?btn('选择本地备份文件','id="connectLocalFile"')+btn('继续自动备份','id="resumeLocalFile"')+btn('停止文件同步','id="disconnectLocalFile"'):'<p class="note">此浏览器不支持直接写入本地文件，请使用最新版 Chrome / Edge。浏览器自动保存不受影响。</p>'}</div><p class="note">重新打开浏览器后，可能需要授权继续写入。停止同步不会删除磁盘上的文件。</p>`;$('content').prepend(section);
+ $('connectLocalFile')?.addEventListener('click',connectLocalFile);$('resumeLocalFile')?.addEventListener('click',resumeLocalFile);$('disconnectLocalFile')?.addEventListener('click',async()=>{const owner=accountStore.active,state=fileMirrors.get(owner);if(state)state.enabled=false;fileMirrors.delete(owner);try{await storeMirrorHandle(owner,null);mirrorStatus('文件同步已停止；浏览器自动保存继续有效')}catch{mirrorStatus('本次会话已停止，但未能清除文件连接记录')}});restoreMirrorForSettings();
+};
+const projectFeedback=renderFeedback;renderFeedback=function(){
+ projectFeedback();const panel=document.createElement('section');panel.className='panel project-links';panel.innerHTML=`<h2>项目源码与本地使用</h2><p class="note">推荐下载到自己的电脑使用：下载 ZIP → 解压 → 打开 index.html。每次保存自动写入本地浏览器，也可在“备份与设置”中连接本地备份文件。</p><div class="actions" style="margin:16px 0"><a class="btn primary" href="https://github.com/Huaisong-Yang/dear-editor" target="_blank" rel="noopener noreferrer">GitHub 项目 ↗</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip">下载本地版 ZIP ↓</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/issues" target="_blank" rel="noopener noreferrer">提交问题与建议 ↗</a></div><p class="note">网页端与本地版属于不同存储空间，首次迁移请导出并恢复备份。保持同一浏览器和文件路径使用。</p>`;$('content').append(panel);
+};
+
 // Public release version is separate from the compatible backup schema version.
 const releaseShell = renderShell;
 renderShell = function(){ releaseShell(); const footer=document.querySelector('.aside-bottom');if(footer)footer.innerHTML=footer.innerHTML.replace(/LOCAL EDITION [\d.]+/g,'VERSION 1.0'); };
