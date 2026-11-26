@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Dear Editor · Elsevier Autofill",
+  "description": "投个好稿 / まだ査読中：预填 Elsevier 查询编号及通讯作者姓名，验证码由用户完成。",
+  "version": "4.0.0",
+  "content_scripts": [
+    {
+      "matches": ["https://webapps.elsevier.cn/st-wechat/*"],
+      "js": ["elsevier-autofill.user.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

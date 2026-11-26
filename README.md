@@ -32,7 +32,7 @@
 - `accounts.js`：本地账号存储隔离。
 - `languages.js`：语言与方言文案。
 - `vendor/`：OpenCC 及其许可证。
-- `integrations/elsevier/`：可选 Elsevier 表单预填扩展及用户脚本。
+- `manifest.json` / `elsevier-autofill.user.js`：可选 Elsevier 表单预填扩展及用户脚本；不安装扩展也可使用网站。
 
 图片作者识别使用外部 Tesseract 资源，首次使用需联网；识别结果须人工核对。
 引用指标手动维护，不代表自动抓取的实时平台数据。
