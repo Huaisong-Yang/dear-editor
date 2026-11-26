@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>投个好稿 · Dear Editor · まだ査読中</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app hidden">
+<aside><div class="brand"><span>稿</span>稿迹</div><div class="tagline">每一份研究，都有迹可循</div><button class="nav active" data-page="overview">▦　投稿总览</button><button class="nav" data-page="stats">▥　数据统计</button><button class="nav" data-page="backup">↗　备份与设置</button><div class="aside-bottom"><div class="local"><i class="dot"></i>本地工作空间</div>数据仅存于当前浏览器<br>记得定期导出备份<br><br>稿迹 / LOCAL EDITION 1.0</div></aside>
+<main><div id="storageWarning" class="warning hidden"></div><div class="top"><div><div class="eyebrow">RESEARCH WORKSPACE</div><h1 id="pageTitle">投稿总览</h1><p id="pageSubtitle">让投稿进展井然有序，专注你的下一次发现。</p></div><button class="btn primary" id="newButton">＋ 新建投稿</button></div><div id="content"></div></main>
+</div>
+<dialog id="editor"><div class="modal-head"><h2 id="editorTitle">新建投稿</h2><button class="close" data-close="editor" aria-label="关闭">×</button></div><form id="paperForm" class="modal-body"><div class="form-grid">
+<div class="field full"><label for="title">论文标题 *</label><input id="title" name="title" required maxlength="500" placeholder="输入你的论文标题"></div>
+<div class="field full"><label for="journal">目标期刊 *</label><input id="journal" name="journal" required maxlength="200" list="journals" placeholder="输入或选择期刊"><datalist id="journals"></datalist></div>
+<div class="field"><label for="status">当前状态</label><select id="status" name="status"></select></div><div class="field"><label for="submitted">投稿日期</label><input type="date" id="submitted" name="submitted"></div>
+<div class="field"><label for="firstReview">一审结束日期</label><input type="date" id="firstReview" name="firstReview"></div>
+<div class="field"><label for="secondReview">二审结束日期</label><input type="date" id="secondReview" name="secondReview"></div>
+<div class="field"><label for="accepted">录用日期</label><input type="date" id="accepted" name="accepted"></div>
+<div class="field"><label for="number">稿件编号</label><input id="number" name="number" maxlength="100" placeholder="例如 MS-2026-001"></div>
+<div class="field full"><label for="doi">论文 DOI（录用后可补充）</label><input id="doi" name="doi" maxlength="300" placeholder="10.1234/example 或 https://doi.org/…"></div>
+<div class="field full"><label>作者名单 · 按署名顺序排列</label><div id="authorRows"></div><button type="button" class="btn" id="addAuthor">＋ 添加作者</button><div class="help">可标注多位共同第一作者和通讯作者，并通过箭头调整顺序。</div></div>
+<div class="field full"><label for="notes">备注</label><textarea id="notes" name="notes" maxlength="10000" placeholder="记录编辑意见、返修要点或下一步计划"></textarea></div>
+</div><div class="modal-foot"><button type="button" class="btn" data-close="editor">取消</button><button type="submit" class="btn primary">保存投稿</button></div></form></dialog>
+<dialog id="detail"><div class="modal-head"><h2>投稿详情</h2><button class="close" data-close="detail" aria-label="关闭">×</button></div><div id="detailBody" class="modal-body"></div></dialog>
+<div id="toast" class="toast hidden" role="status"></div>
+
+<script src="vendor/opencc-cn2t.js"></script>
+<script src="languages.js"></script>
+<script src="accounts.js"></script>
+
+<script src="app.js"></script>
+</body>
+</html>
