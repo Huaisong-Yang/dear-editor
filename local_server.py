@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 import webbrowser
@@ -20,7 +21,7 @@ COOKIE = "de_local_session"
 MAX_BODY = 24 * 1024 * 1024
 STATIC = {
     "app.js", "app.css", "accounts.js", "languages.js", "local-mode.js", "local-memory.js",
-    "vendor/opencc-cn2t.js",
+    "vendor/opencc-cn2t.js", "progress.js",
 }
 
 
@@ -46,6 +47,7 @@ class LocalServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), Handler)
         self.db_path = db_path
         self.origin = f"http://127.0.0.1:{self.server_port}"
+        self.tabs = BrowserTabs()
         with self.db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -72,7 +74,51 @@ class LocalServer(ThreadingHTTPServer):
         return transaction()
 
 
+class BrowserTabs:
+    startup_grace = 90
+    lease = 180
+    close_grace = 10
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.tabs = {}
+        self.deadline = clock() + self.startup_grace
+
+    def update(self, body):
+        tab, sequence, active = body.get("tab"), body.get("sequence"), body.get("active")
+        if (not isinstance(tab, str) or not re.fullmatch(r"[a-zA-Z0-9-]{1,64}", tab)
+                or type(sequence) is not int or not 0 < sequence <= 2**53-1 or type(active) is not bool):
+            raise Problem(400, "标签页请求格式不正确。")
+        with self.lock:
+            now = self.clock()
+            self.prune(now)
+            previous = self.tabs.get(tab)
+            if previous and sequence <= previous[0]:
+                return
+            if not previous and len(self.tabs) >= 4096:
+                raise Problem(429, "本地标签页过多。")
+            self.tabs[tab] = (sequence, now + self.lease, active)
+            if active:
+                self.deadline = now + self.lease
+            elif previous and previous[2]:
+                self.deadline = max((t[1] for t in self.tabs.values() if t[2]), default=now + self.close_grace)
+
+    def prune(self, now):
+        self.tabs = {key: value for key, value in self.tabs.items() if value[1] > now}
+
+    def expired(self):
+        with self.lock:
+            now = self.clock()
+            self.prune(now)
+            return now >= self.deadline and not any(t[2] for t in self.tabs.values())
+
+
 class Handler(BaseHTTPRequestHandler):
+    def log_request(self, code="-", size="-"):
+        if self.path not in ("/api/tab", "/api/tab-close"):
+            super().log_request(code, size)
+
     def reply(self, status, body, content_type="application/json; charset=utf-8", cookie=None):
         if not isinstance(body, bytes):
             body = json.dumps(body, ensure_ascii=False).encode()
@@ -108,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
             raise Problem(403, "请通过本机启动地址访问。")
         if post and (self.headers.get("Origin") != self.server.origin
-                     or self.headers.get("X-Dear-Editor-Local") != "1"
+                     or (self.path != "/api/tab-close" and self.headers.get("X-Dear-Editor-Local") != "1")
                      or self.headers.get_content_type() != "application/json"):
             raise Problem(403, "只接受本地页面发起的请求。")
 
@@ -158,6 +204,11 @@ class Handler(BaseHTTPRequestHandler):
     def action(self, body):
         route = self.path
         cookie = None
+        if route in ("/api/tab", "/api/tab-close"):
+            if route == "/api/tab-close" and body.get("active") is not False:
+                raise Problem(400, "此接口仅用于关闭标签页。")
+            self.server.tabs.update(body)
+            return {}, None
         with self.server.db() as db:
             if route in ("/api/login", "/api/register"):
                 register = route == "/api/register"
@@ -239,6 +290,7 @@ def main():
     data_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "DearEditor"
     parser.add_argument("--db", type=Path, default=data_dir / "workspace.sqlite3")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--auto-exit", action="store_true", help="stop after all Dear Editor browser tabs close")
     args = parser.parse_args()
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with LocalServer(args.port, args.db.resolve()) as server:
@@ -246,7 +298,13 @@ def main():
         if not args.no_browser:
             webbrowser.open(server.origin)
         try:
-            server.serve_forever()
+            if args.auto_exit:
+                server.timeout = 0.5
+                while not server.tabs.expired():
+                    server.handle_request()
+                print("Dear Editor: no active browser tabs. Closing.", flush=True)
+            else:
+                server.serve_forever()
         except KeyboardInterrupt:
             pass
 

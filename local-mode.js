@@ -1,4 +1,21 @@
 'use strict';
+// Track each document, including the login screen. A lease covers browsers that
+// skip pagehide; keepalive lets a normal close shorten the wait.
+const diskTab=uid();
+let diskTabSequence=0,diskTabActive=true;
+function diskTabSignal(active){
+ const body=JSON.stringify({tab:diskTab,sequence:++diskTabSequence,active});
+ if(!active&&navigator.sendBeacon?.('/api/tab-close',new Blob([body],{type:'application/json'})))return;
+ fetch('/api/tab',{method:'POST',keepalive:true,
+  headers:{'Content-Type':'application/json','X-Dear-Editor-Local':'1'},
+  body
+ }).catch(()=>{});
+}
+diskTabSignal(true);
+setInterval(()=>{if(diskTabActive)diskTabSignal(true)},15000);
+window.addEventListener('pagehide',()=>{diskTabActive=false;diskTabSignal(false)});
+window.addEventListener('pageshow',()=>{diskTabActive=true;diskTabSignal(true)});
+document.addEventListener('visibilitychange',()=>{if(diskTabActive)diskTabSignal(true)});
 let diskSession=null;
 const diskKeys=[KEY,AUTHORS_KEY,PROFILE_KEY,SETTINGS_KEY];
 function diskRequest(action,body){
