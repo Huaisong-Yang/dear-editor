@@ -199,7 +199,6 @@ function identityLinks(){
  if(!profile)return '';
  return '<div class="profile-links">'+[
   profile.orcid&&['ORCID',`https://orcid.org/${encodeURIComponent(profile.orcid)}`],
-  profile.wos&&['Web of Science',`https://www.webofscience.com/wos/author/record/${encodeURIComponent(profile.wos)}`],
   profile.scopus&&['Scopus',`https://www.scopus.com/authid/detail.uri?authorId=${encodeURIComponent(profile.scopus)}`],
   profile.website&&safeUrl(profile.website)&&[T('个人网站','Website','ウェブサイト'),profile.website]
  ].filter(Boolean).map(([name,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${name} ↗</a>`).join('')+'</div>';
@@ -253,6 +252,7 @@ function openEditor(id=null,source=null){
  if(source){r={...r,journal:'',status:'waiting',submitted:'',accepted:'',number:'',doi:'',rounds:[],systemUrl:''}}
  authorDraft=(r.authors||[]).map(a=>({...a}));roundDraft=clone(r.rounds||[]);
  modal('editor',old?T('编辑投稿','Edit submission','投稿を編集'):T('新建投稿','New submission','新規投稿'),`<form id="paperForm">${paperFields(r)}<section class="editor-section"><h2>${T('作者与署名顺序','Authors & order','著者と掲載順')}</h2><div class="actions">${btn(T('从作者库选择','Choose from library','ライブラリから選択'),'type="button" data-pick-authors')}${btn(T('添加本人','Add myself','自分を追加'),'type="button" data-add-self')}${btn('＋ '+T('新作者','New author','新しい著者'),'type="button" data-add-author')}</div><div id="authorRows"></div></section><section class="editor-section"><div class="section-heading"><h2>${T('审稿轮次 · 不限一审二审','Review rounds · unlimited stages','査読ラウンド・回数制限なし')}</h2>${btn('＋ '+T('返修后新一轮','New resubmission round','再投稿ラウンドを追加'),'type="button" data-add-round')}</div><p class="help">${T('每次返修后重新提交，请新增一轮。数量留空表示未知，0 表示确认没有。RRC 需按系统显示手动记录，不根据数量自动判断。','Add a round for each resubmission. Blank counts mean unknown; zero means none. Record RRC only when the journal reports it, not from counts alone.','修正後の再投稿ごとに追加してください。空欄は不明、0は該当なしです。RRCは件数で推測せず、システムの表示を記録します。')}</p><div id="roundRows"></div></section><div class="field"><label for="notes">${T('备注','Notes','メモ')}</label><textarea id="notes" maxlength="10000">${esc(r.notes)}</textarea></div><div class="modal-foot">${btn(txt.cancel(),'type="button" data-close="editor"')}${btn(txt.save(),'type="submit"',true)}</div></form>`);
+ $('citationSources')?.querySelectorAll('option').forEach(option=>{if(option.value!=='Scopus')option.remove()});
  drawAuthors();drawRounds();$('paperForm').onsubmit=savePaper;
  $('status').onchange=()=>{$('journal').required=$('status').value!=='waiting'};
  $('status').onchange();editorBaseline=editorFingerprint();
@@ -315,11 +315,15 @@ function eventText(h){
  return esc(h.text); // User-written and legacy text is preserved, never translated.
 }
 function showDetail(id){
- const r=records.find(r=>r.id===id);if(!r)return;detailId=id;
+ const record=records.find(r=>r.id===id);if(!record)return;detailId=id;
+ const r=citationDisplayRecord(record);
  const system=editorSystem(r),related=records.filter(x=>x.paperId===r.paperId&&x.id!==r.id);
  modal('detail',T('投稿详情','Submission details','投稿詳細'),`${badge(r)}<h2 class="detail-title">${esc(r.title)}</h2><p>${esc(r.journal)||T('期刊待定','Journal TBD','投稿先未定')}</p><div class="detail-meta">${[['submitted',txt.submitted()],['accepted',txt.accepted()],['number',txt.number()],['updated',txt.updated()]].map(([k,n])=>`<div><small>${n}</small>${esc(r[k])||'—'}</div>`).join('')}</div><h2>${T('作者与署名','Authors','著者')}</h2><div class="author-list">${authorsText(r)||'—'}</div><p class="help">${T('¹ 第一 / 共同第一作者 · ✉ 通讯作者','¹ First / co-first · ✉ Corresponding','¹ 第一／共同第一著者 · ✉ 責任著者')}</p>${r.doi?`<p>DOI: <a href="https://doi.org/${esc(encodeURI(r.doi))}" target="_blank" rel="noopener noreferrer">${esc(r.doi)}</a></p>`:''}<p>${txt.citations()}: ${r.citations??'—'} · ${esc(r.citationSource)||txt.unknown()} · ${esc(r.citationDate)||'—'}</p><div class="actions detail-actions">${btn(txt.edit(),`data-edit="${esc(r.id)}"`,true)}${['reject','withdraw'].includes(r.status)?btn(T('转投','Transfer to another journal','別誌に投稿'),`data-transfer="${esc(r.id)}"`):''}${btn(txt.remove(),`data-delete="${esc(r.id)}"`)}${system?`<a class="btn" href="${esc(system)}" target="_blank" rel="noopener noreferrer">${T('投稿 / 审稿系统','Editorial system','投稿・査読システム')} ↗</a>`:''}</div><section class="panel"><h2>${T('审稿轮次','Review rounds','査読ラウンド')}</h2>${roundsTable(r)}</section><div id="querySection"></div><div class="panel notes">${esc(r.notes)||T('暂无备注','No notes','メモなし')}</div>${related.length?`<section class="panel"><h2>${T('同一论文的其他投稿','Other attempts for this paper','同一論文の他の投稿')}</h2>${related.map(x=>`<button class="linkbtn" data-detail="${esc(x.id)}">${esc(x.journal)} · ${stateName(x.status)} ↗</button>`).join('<br>')}</section>`:''}<h2>${T('进展时间线','Timeline','タイムライン')}</h2><div class="timeline">${[...r.history].reverse().map(h=>`<div class="event"><time>${esc(h.date)}${h.round?' · '+txt.round()+' '+h.round:''}</time><div>${eventText(h)}</div></div>`).join('')}</div>`);
  $('detailBody').querySelector('.detail-actions').insertAdjacentHTML('afterbegin',progressButton(r));
- renderQuery(r);
+ if(r.status==='accept'){
+  const summary=citationPaperSummary(r);
+  if(summary)$('querySection').innerHTML=`<p class="note">${esc(summary)}</p>`;
+ }else renderQuery(r);
 }
 function roundsTable(r){return `<div class="table-wrap"><table><thead><tr>${[txt.round(),T('提交','Submitted','提出'),'WE','UR','RRC',T('决定','Decision','判定'),T('邀请 / 接受 / 完成','Invited / agreed / completed','招待 / 承諾 / 完了')].map(n=>`<th>${n}</th>`).join('')}</tr></thead><tbody>${r.rounds.map(q=>`<tr><td>${q.index}</td>${['submitted','we','ur','rrc'].map(k=>`<td class="nowrap">${esc(q[k])||'—'}</td>`).join('')}<td>${q.decision?stateName(q.decision):'—'}<small>${esc(q.decisionDate)}</small>${q.legacyEnd?`<small>${T('旧版结束日期','Legacy end','旧版終了日')}: ${esc(q.legacyEnd)}</small>`:''}</td><td>${q.invited??'—'} / ${q.agreed??'—'} / ${q.completed??'—'}</td></tr>`).join('')||`<tr><td colspan="7">${T('暂无轮次','No rounds yet','ラウンドなし')}</td></tr>`}</tbody></table></div>`}
 function ownPerson(){
@@ -358,7 +362,7 @@ function durationStats(rs){
 }
 function citationPapers(){
  const map=new Map();
- records.filter(r=>r.status==='accept').forEach(r=>{const key=r.paperId;const current=map.get(key);if(!current||r.citations!==null&&(current.citations===null||(r.citationDate||r.updated)>=(current.citationDate||current.updated)))map.set(key,r)});
+ records.filter(r=>r.status==='accept').map(citationDisplayRecord).forEach(r=>{const key=r.paperId;const current=map.get(key);if(!current||r.citations!==null&&(current.citations===null||(r.citationDate||r.updated)>=(current.citationDate||current.updated)))map.set(key,r)});
  return [...map.values()];
 }
 function renderStats(){
@@ -684,7 +688,7 @@ renderStats=function(){
  }).join('')||`<tr><td colspan="5">${T('暂无数据','No data yet','データなし')}</td></tr>`;
  panel.insertAdjacentHTML('beforeend',`<p class="note">${T('悬停数字查看每个样本；点击可展开论文、轮次、起止日期和具体用时。','Hover over a value for individual samples; click for the paper, round, dates and exact duration.','数値にカーソルを合わせると各サンプルを表示。クリックで論文・ラウンド・日付・日数を確認できます。')}</p>`);
  const citationSection=[...$('content').querySelectorAll('.panel')].at(-1);
- citationSection.querySelector('.note').textContent=T('只展示已录用论文，按论文去重；引用次数手动更新。','Accepted papers only, deduplicated by paper; citation counts are updated manually.','採択済み論文のみ、論文ごとに重複を除外。引用数は手動更新です。');
+ citationSection.querySelector('.note').textContent=T('只展示已录用论文，按论文去重；每条数值以标注的来源为准。','Accepted papers only, deduplicated by paper. Each count uses the source shown.','採択済み論文のみ、重複を除外。各件数は表示された出典に従います。');
 };
 function durationModal(key){
  const samples=durationSources.get(key)||[];
@@ -734,12 +738,10 @@ renderProfile=function(){
  const metrics=$('content').querySelector('.profile-columns .metrics-small');
  [...metrics.children].slice(3).forEach(el=>el.remove());
  for(const k of ['citingArticles','withoutSelf'])$('p-'+k)?.closest('.field').remove();
- const source=$('p-metricsSource'),sourceField=source.closest('.field');
- sourceField.innerHTML=select('p-metricsSource',txt.source(),[['Scopus','Scopus']],'Scopus').replace(/^<div class="field">|<\/div>$/g,'');
- const note=metrics.parentElement.querySelector('.note');
- note.textContent=(profile.metricsSource==='Scopus'?'Scopus':T('Scopus 来源待确认；原有数值保留，请核对后保存','Scopus source not yet confirmed; existing values are retained. Verify before saving.','Scopusの出典未確認。元の数値を保持しています。確認して保存してください。'))+' · '+txt.updated()+': '+(profile.metricsDate||'—');
- const help=$('profileForm').querySelector('.note');
- help.textContent=T('本版仅维护 Scopus 的文献数、引用次数和 h-index。关联 ID 是主页入口，暂不自动抓取；原来的其他指标保留在备份中。','This version maintains Scopus publications, citations and h-index manually. Linked IDs open profile pages; automatic scraping is not enabled. Other legacy metrics remain in backups.','Scopusの論文数・被引用数・h-indexのみ手動管理します。IDはプロフィールへのリンクです。自動取得は未実装で、旧指標はバックアップに保持します。');
+  const note=metrics.parentElement.querySelector('.note');
+  note.textContent=(profile.metricsSource||'—')+' · '+txt.updated()+': '+(profile.metricsDate||'—');
+  $('p-wos')?.closest('.field').remove();
+  $('p-metricsSource')?.setAttribute('placeholder','Scopus');
 };
 let rememberChoice=null;
 function rememberedAccount(){
@@ -760,7 +762,7 @@ showLogin=function(){
  form.onsubmit=async e=>{rememberChoice=$('rememberLogin').checked;await submit(e);rememberChoice=null};
 };
 function renderFeedback(){
- const f=settings.feedback;
+ const f=window.dearEditorProjectFeedback||{};
  $('content').innerHTML=`<section class="feedback-hero"><div class="eyebrow">DEAR RESEARCHER</div><h2>${T('你的建议，让投稿之路更顺一点。','Your feedback makes the research journey better.','ご意見が研究の道のりをよりよくします。')}</h2><p>${T('欢迎反馈问题、分享想法，也欢迎支持这个小工具。','Questions, ideas and support are always welcome.','不具合・アイデア・ご支援を歓迎します。')}</p></section><div class="profile-columns"><section class="panel"><h2>${T('联系作者','Contact the developer','開発者への連絡')}</h2><div class="contact-list"><p><small>${txt.email()}</small><a href="mailto:${esc(f.email||'yanghuaisong@hrbeu.edu.cn')}">${esc(f.email||'yanghuaisong@hrbeu.edu.cn')}</a></p><p><small>${txt.phone()}</small><span>${esc(f.phone)||T('待提供','Not provided','未設定')}</span></p><p><small>${T('微信','WeChat','WeChat')}</small><span>${esc(f.wechat)||T('待提供','Not provided','未設定')}</span></p></div>${btn(T('编辑联系方式与支持信息','Edit contact & support details','連絡・支援情報を編集'),'data-edit-feedback')}</section><section class="panel"><h2>${T('欢迎支持','Support this project','ご支援について')}</h2><p class="notes">${esc(f.welcome)||T('如果这个工具让你的投稿管理轻松了一点，欢迎分享给同事，也欢迎请开发者喝杯咖啡。','If this tool helps, share it with colleagues or support the developer with a coffee.','役立ちましたら同僚への紹介や、開発者へのコーヒーのご支援を歓迎します。')}</p><div class="support-codes">${[['wechatQr',T('微信支持','WeChat support','WeChat支援')],['alipayQr',T('支付宝支持','Alipay support','Alipay支援')]].map(([k,n])=>`<div><h3>${n}</h3>${f[k]?`<img src="${esc(f[k])}" alt="${n}">`:`<div class="qr-placeholder">${T('尚未上传收款码','No QR code uploaded','QRコード未登録')}</div>`}</div>`).join('')}</div></section></div>`;
 }
 function editFeedback(){
@@ -1035,13 +1037,23 @@ renderStats=function(){
  const distribution=[...$('content').querySelectorAll('.panel')].find(p=>p.querySelector('.bar-row'));
  if(distribution){const heading=distribution.querySelector('h2').outerHTML;distribution.innerHTML=heading+ACTIVE_STATES.map(s=>{const n=records.filter(r=>r.status===s).length;return `<div class="bar-row"><span>${stateName(s)}</span><div class="bar-track"><div class="bar" style="width:${records.length?n/records.length*100:0}%"></div></div><span>${n}</span></div>`}).join('')}
  const last=[...$('content').querySelectorAll('.panel')].at(-1),papers=citationPapers();
- const rows=last.querySelectorAll('tbody tr');rows.forEach((row,i)=>{if(!papers[i])return;row.insertAdjacentHTML('beforeend',`<td>${btn(T('编辑引用','Edit citations','引用を編集'),`data-citation="${esc(papers[i].id)}"`)}</td>`)});
+  const rows=last.querySelectorAll('tbody tr');rows.forEach((row,i)=>{if(!papers[i])return;row.insertAdjacentHTML('beforeend',`<td>${btn(citationButtonLabel(),`data-citation="${esc(papers[i].id)}"`)}</td>`)});
  last.querySelector('thead tr').insertAdjacentHTML('beforeend',`<th>${T('操作','Actions','操作')}</th>`);
 };
 function editCitations(id){
  const r=records.find(r=>r.id===id);if(!r||r.status!=='accept')return;
- modal('citationEdit',T('编辑论文引用','Edit paper citations','論文の引用を編集'),`<form id="citationForm"><h3>${esc(r.title)}</h3><div class="form-grid">${field('cite-count',txt.citations(),r.citations,'number')}${field('cite-source',txt.source(),r.citationSource,'text','list="citationSources"')}${field('cite-date',txt.updated(),r.citationDate||today(),'date')}</div><p class="note">${T('这些数值来自你的手动记录，不是实时平台数据。未知时请留空。','These are your recorded values, not live platform data. Leave unknown counts blank.','手動記録値であり、リアルタイムデータではありません。不明は空欄にしてください。')}</p><div class="modal-foot">${btn(txt.save(),'type="submit"',true)}</div></form>`);
- $('citationForm').onsubmit=e=>{e.preventDefault();const next={...r,citations:$('cite-count').value===''?null:Number($('cite-count').value),citationSource:$('cite-source').value.trim(),citationDate:$('cite-date').value,updated:today()};if(writeAll(records.map(x=>x.id===id?next:x))){$('citationEdit').close();renderStats()}};
+  const current=currentPaperCitation(r);
+  modal('citationEdit',citationButtonLabel(),`<form id="citationForm" data-keep-actions><h3>${esc(r.title)}</h3><p class="note">${esc(citationPaperSummary(r))}</p>${citationLinks(r.id)}<h3>${T('手动记录','Manual entry','手入力')}</h3><div class="form-grid">${field('cite-count',txt.citations(),current?.count,'number')}${field('cite-source',txt.source(),current?.source,'text','list="citationEditSources"')}${field('cite-date',txt.updated(),r.citationDate||today(),'date')}</div><datalist id="citationEditSources"><option>Scopus</option></datalist><div class="modal-foot">${btn(txt.cancel(),'type="button" data-close="citationEdit"')}${btn(txt.save(),'type="submit"',true)}</div></form>`);
+  $('citationForm').onsubmit=e=>{
+   e.preventDefault();
+   const current=records.find(r=>r.id===id);
+   if(!current||current.status!=='accept')return;
+   const count=$('cite-count').value===''?null:Number($('cite-count').value),source=$('cite-source').value.trim(),date=$('cite-date').value;
+   const key=citationSourceKey(source),sources=paperCitationSources(current);
+   if(count!==null)sources[key]={count,source,date};else delete sources[key];
+   const next={...current,citations:count,citationSource:source,citationDate:date,citationsBySource:sources,updated:today()};
+   if(writeAll(records.map(x=>x.id===id?next:x))){$('citationEdit').close();render();if($('detail').open)showDetail(id)}
+  };
 }
 const ADMIN_KEY='gaoji.admin.v1';
 const oldFeedback=renderFeedback;
@@ -1197,18 +1209,17 @@ function editTodo(id){const t=widgetData().todos.find(x=>x.id===id)||{};modal('t
 document.addEventListener('click',e=>{const b=e.target.closest('[data-todo-edit]');if(b)editTodo(b.dataset.todoEdit)});
 document.addEventListener('change',e=>{if(e.target.matches('[data-todo-check]')){const next=clone(settings);next.widgets.todos.find(t=>t.id===e.target.dataset.todoCheck).done=e.target.checked;if(writeAll(records,library,profile,{nextSettings:next}))render()}});
 renderFeedback=function(){oldFeedback();document.querySelector('[data-edit-feedback]')?.remove()};
-const v6Profile=renderProfile;renderProfile=function(){v6Profile();$('p-metricsSource')?.closest('.field').classList.add('hidden');const metrics=document.querySelector('.profile-columns .metrics-small');if(metrics?.nextElementSibling)metrics.nextElementSibling.textContent=txt.updated()+': '+(profile.metricsDate||'—');const help=$('profileForm')?.querySelector('.note');if(help)help.textContent='';};
+const v6Profile=renderProfile;renderProfile=function(){v6Profile();const help=$('profileForm')?.querySelector('.note');if(help)help.textContent='';};
 // Append dated observations before every paper write, including edits outside statistics.
 const v6Write=writeAll;
 writeAll=function(rs=records,people=library,p=profile,options={}){
  try{
   if(p&&accountStore.list().some(a=>a.id!==accountStore.active&&a.profile.username.toLocaleLowerCase()===p.username.toLocaleLowerCase()))throw Error('该用户名属于另一个本地账号，请在对应账号中恢复备份');
-  const next=rs.map(r=>{const old=records.find(x=>x.id===r.id),history=clone(r.citationHistory||old?.citationHistory||[]);if(!Array.isArray(history)||history.some(h=>!dateOK(h.date)||!h.date||!Number.isInteger(h.count)||h.count<0))throw Error('引用历史格式无效');for(const x of [old,r])if(x&&x.citations!=null&&x.citationDate&&!history.some(h=>h.date===x.citationDate&&h.count===x.citations))history.push({date:x.citationDate,count:x.citations});return {...r,citationHistory:history}});
+   const next=rs.map(r=>{const old=records.find(x=>x.id===r.id),history=clone(r.citationHistory||old?.citationHistory||[]);if(!Array.isArray(history)||history.some(h=>!dateOK(h.date)||!h.date||!Number.isInteger(h.count)||h.count<0))throw Error('引用历史格式无效');addCitationHistory(history,old,true);addCitationHistory(history,r,!old||old.citationSource===r.citationSource);return {...r,citationHistory:history}});
   return v6Write(next,people,p,options);
  }catch(err){alert(err.message);return false}
 };
-const v6Citations=editCitations;editCitations=function(id){v6Citations(id);$('cite-source').closest('.field').classList.add('hidden');$('cite-count').min='0';$('cite-count').step='1';};
-const v6Stats=renderStats;renderStats=function(){v6Stats();document.querySelectorAll('#content table').forEach(table=>{const index=[...table.querySelectorAll('thead th')].findIndex(th=>th.textContent===txt.source());if(index>=0)table.querySelectorAll('tr').forEach(row=>row.children[index]?.remove())});const rows=citationPapers().flatMap(r=>{const history=clone(r.citationHistory||[]);if(r.citations!=null&&r.citationDate&&!history.some(h=>h.date===r.citationDate&&h.count===r.citations))history.push({date:r.citationDate,count:r.citations});return history.map(h=>({...h,title:r.title}))}).sort((a,b)=>b.date.localeCompare(a.date));$('content').insertAdjacentHTML('beforeend',`<section class="panel"><h2>引用更新记录</h2><div class="table-wrap"><table><thead><tr><th>更新日期</th><th>论文</th><th>引用次数</th></tr></thead><tbody>${rows.map(h=>`<tr><td>${esc(h.date)}</td><td>${esc(h.title)}</td><td>${esc(h.count)}</td></tr>`).join('')||'<tr><td colspan="3">暂无有日期的更新记录</td></tr>'}</tbody></table></div></section>`)};
+const v6Citations=editCitations;editCitations=function(id){v6Citations(id);if(!$('cite-count'))return;$('cite-count').min='0';$('cite-count').step='1';};
 function institutionEntries(){const map=new Map();for(const p of [...settings.institutions,...library,...records.flatMap(r=>r.authors),...(profile?[profile]:[])]){const name=p.institution||p.name;if(!name||(!p.institution&&!settings.institutions.includes(p)))continue;const key=name+'\0'+(p.department||'');if(!map.has(key))map.set(key,{...p,name,department:p.department||'',id:settings.institutions.includes(p)?p.id:''})}return [...map.values()]}
 renderInstitutions=function(){const entries=institutionEntries(),names=[...new Set(entries.map(x=>x.name))].sort((a,b)=>a.localeCompare(b));$('content').innerHTML=`<section class="panel"><div class="section-heading"><h2>学校与学院</h2>${btn('＋ 添加学校 / 学院','data-institution=""',true)}</div></section>${names.map(name=>`<section class="panel"><h2>${esc(name)}</h2><div class="institution-grid">${entries.filter(x=>x.name===name).map((x)=>`<article class="desk-card"><h3>${esc(x.department)||'学校 / 机构'}</h3><p>${esc(x.country)}</p>${btn(txt.edit(),`data-institution="${esc(x.id)}" data-institution-name="${esc(name)}" data-department="${esc(x.department)}"`)}</article>`).join('')}</div></section>`).join('')}`};
 const v6Institution=editInstitution;editInstitution=function(id,name){v6Institution(id,name);attachInstitutionHints()};
@@ -1271,7 +1282,7 @@ renderOverview=function(){
 };
 const v7Widgets=widgetSettings;widgetSettings=function(){v7Widgets();$('precision').closest('.field').hidden=true;$('winter').closest('.field').hidden=true;$('summer').closest('.field').hidden=true;$('winter').closest('.form-grid').insertAdjacentHTML('beforeend',field('vacation','假期开始',widgetData().vacation,'datetime-local'));const submit=$('widgetForm').onsubmit;$('widgetForm').onsubmit=e=>{const value=$('vacation').value;const writer=writeAll;writeAll=function(rs,people,p,options){options.nextSettings.widgets.vacation=value;return writer(rs,people,p,options)};try{submit(e)}finally{writeAll=writer}}};
 const v7Countdown=editCountdown;editCountdown=function(id){v7Countdown(id);$('c-precision').closest('.field').hidden=true};
-const v7Citations=editCitations;editCitations=function(id){v7Citations(id);$('cite-date').value=today();$('cite-date').readOnly=true;const submit=$('citationForm').onsubmit;$('citationForm').onsubmit=e=>{$('cite-date').value=today();return submit(e)}};
+const v7Citations=editCitations;editCitations=function(id){v7Citations(id);if(!$('cite-date'))return;$('cite-date').value=today();$('cite-date').readOnly=true;const submit=$('citationForm').onsubmit;$('citationForm').onsubmit=e=>{$('cite-date').value=today();return submit(e)}};
 const v7Profile=renderProfile;renderProfile=function(){v7Profile();if(!$('profileForm'))return;$('p-metricsDate').value=today();$('p-metricsDate').readOnly=true;const submit=$('profileForm').onsubmit;$('profileForm').onsubmit=e=>{$('p-metricsDate').value=today();return submit(e)}};
 const v7Editor=openEditor;openEditor=function(id,source){v7Editor(id,source);$('citationDate').readOnly=true;const oldCount=$('citations').value;$('citations').addEventListener('input',()=>{if($('citations').value!==oldCount)$('citationDate').value=today()});if(!$('citationDate').value)$('citationDate').value=today();editorBaseline=editorFingerprint()};
 function institutionKey(x){return JSON.stringify([x.name||x.institution,x.department||''])}
@@ -1321,7 +1332,7 @@ widgetSettings=function(){const w=widgetData();let schedule=clone(w.schedule);
   $('widgetForm').onsubmit=e=>{e.preventDefault();try{collectRows();const ordered=schedule.slice().sort((a,b)=>a.start.localeCompare(b.start));ordered.forEach((p,i)=>{if(!p.name||!/^\d{2}:\d{2}$/.test(p.start)||!/^\d{2}:\d{2}$/.test(p.end)||p.start>=p.end||(i&&p.start<ordered[i-1].end))throw Error('请填写阶段名称和有效起止时间，时间不能重叠或跨日')});const next=clone(settings);next.widgets.schedule=ordered;next.widgets.quote=false;next.widgets.vacation=$('vacation').value;for(const k of ['holidays','workdays']){next.widgets[k]=$(k).value.split(/[\s,，]+/).filter(Boolean);if(next.widgets[k].some(d=>!dateOK(d)))throw Error('日期请使用 YYYY-MM-DD 格式')}next.widgets.seasons=w.seasons.map((s,i)=>$('season-'+i).value);if(writeAll(records,library,profile,{nextSettings:next})){$('widgetSettings').close();render()}}catch(err){$('widgetError').textContent=err.message}};
 };
 function applyTheme(){const mode=localStorage.getItem('gaoji.theme.v8')||'auto',dark=mode==='dark'||mode==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light';if($('themeMode'))$('themeMode').value=mode}
-function themeControl(){document.querySelector('#themeControl')?.remove();const box=document.createElement('div');box.id='themeControl';box.innerHTML='<label for="themeMode">外观</label><select id="themeMode" aria-label="昼夜模式"><option value="auto">跟随系统</option><option value="light">☀ 白天</option><option value="dark">☾ 黑夜</option></select>';document.body.append(box);$('themeMode').onchange=()=>{localStorage.setItem('gaoji.theme.v8',$('themeMode').value);applyTheme()};applyTheme()}
+function themeControl(){document.querySelector('#themeControl')?.remove();const box=document.createElement('div');box.id='themeControl';box.innerHTML=`<label class="language-globe theme-globe" for="themeMode"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19m0-14-1.4 1.4M6.4 17.6 5 19"/></svg><select id="themeMode" aria-label="${T('昼夜模式','Appearance','外観')}"><option value="auto">${T('跟随系统','System','システム')}</option><option value="light">${T('白天','Light','ライト')}</option><option value="dark">${T('黑夜','Dark','ダーク')}</option></select></label>`;document.body.append(box);$('themeMode').onchange=()=>{localStorage.setItem('gaoji.theme.v8',$('themeMode').value);applyTheme()};applyTheme()}
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',applyTheme);
 const v8Shell=renderShell;renderShell=function(){v8Shell();document.querySelector('.aside-bottom').innerHTML=document.querySelector('.aside-bottom').innerHTML.replace('7.0','8.0');themeControl()};
 const v8Login=showLogin;showLogin=function(register=false){v8Login(register);themeControl()};
@@ -1429,14 +1440,7 @@ writeAll=function(rs=records,people=library,p=profile,options={}){
  }
  return v8Write(rs,people,p,{...options,nextSettings:next});
 };
-const SHARED_FEEDBACK='de.feedback.shared.v1',SOCIAL_KEY='de.social.v1';
-function sharedFeedback(){
- const native=accountStore.native,raw=native.getItem(SHARED_FEEDBACK);if(raw)return JSON.parse(raw);
- const candidates=[settings.feedback];for(let i=0;i<native.length;i++){const key=native.key(i);if(key==='gaoji.settings.v4'||/^de\.user\.[^.]+\.gaoji\.settings\.v4$/.test(key)){try{candidates.push(JSON.parse(native.getItem(key)).feedback)}catch{}}}
- const result={};for(const f of candidates.filter(Boolean))for(const [k,v] of Object.entries(f))if(v&&!result[k])result[k]=v;
- native.setItem(SHARED_FEEDBACK,JSON.stringify(result));return result;
-}
-const v10Feedback=renderFeedback;renderFeedback=function(){const saved=settings.feedback;try{settings.feedback=sharedFeedback();v10Feedback()}finally{settings.feedback=saved}};
+const SOCIAL_KEY='de.social.v1';
 function socialData(){return JSON.parse(accountStore.native.getItem(SOCIAL_KEY)||'{"visits":[],"messages":[]}')}
 function saveSocial(data){try{accountStore.native.setItem(SOCIAL_KEY,JSON.stringify(data));return true}catch{toast('保存失败，请检查本地存储空间');return false}}
 function publicAccounts(){return accountStore.list().map(a=>({id:a.id,name:a.profile.name||a.profile.username,profile:a.profile}))}
@@ -1489,8 +1493,6 @@ function removeCurrentAccount(){
  const native=accountStore.native,owner=accountStore.active,generation=profile.salt;
  const changes=new Map(),remember=k=>{if(!changes.has(k))changes.set(k,native.getItem(k))};
  const keys=[];for(let i=0;i<native.length;i++){const key=native.key(i);if(owner==='legacy'?key.startsWith('gaoji.')&&key!=='gaoji.lang':key.startsWith('de.user.'+owner+'.'))keys.push(key)}
- // Materialize common support before deleting a legacy workspace that contains it.
- sharedFeedback();
  try{
   remember(DELETED_ACCOUNTS);const deleted=JSON.parse(native.getItem(DELETED_ACCOUNTS)||'[]');deleted.push({id:owner,generation});native.setItem(DELETED_ACCOUNTS,JSON.stringify(deleted));
   remember(SOCIAL_KEY);const social=socialData();social.visits=social.visits.filter(x=>x.from!==owner&&x.to!==owner);social.messages=social.messages.filter(x=>x.from!==owner&&x.to!==owner);native.setItem(SOCIAL_KEY,JSON.stringify(social));
@@ -1633,7 +1635,7 @@ const v15Charge=updateStageCharge;updateStageCharge=function(){
  v15Charge();document.querySelectorAll('.work-phase').forEach(el=>{const percent=el.querySelector('.stage-percent');if(!percent)return;const n=Math.max(0,Math.min(100,parseFloat(el.style.getPropertyValue('--progress'))||0));const active=el.classList.contains('current');percent.textContent=active?`当前进度 ${Math.floor(n)}%`:'';percent.title=active?'本阶段已经过去的时间比例':'';if(active)el.setAttribute('aria-label',`${el.querySelector('span').textContent}，当前进度 ${Math.floor(n)}%，${el.querySelector('small').textContent}`)});
 };
 const v15Card=card;card=function(r){
- const wrap=document.createElement('div');wrap.innerHTML=v15Card(r);const article=wrap.querySelector('.card'),meta=wrap.querySelector('.meta'),footer=wrap.querySelector('.card-bottom');
+ const wrap=document.createElement('div');wrap.innerHTML=v15Card(citationDisplayRecord(r));const article=wrap.querySelector('.card'),meta=wrap.querySelector('.meta'),footer=wrap.querySelector('.card-bottom');
  if(footer)footer.insertAdjacentHTML('beforeend',progressButton(r));
  if(meta&&footer){meta.classList.add('submission-date-row');article.insertBefore(meta,footer)}return wrap.innerHTML;
 };
@@ -1753,4 +1755,6 @@ const projectFeedback=renderFeedback;renderFeedback=function(){
 // Public release version is separate from the compatible backup schema version.
 const releaseShell = renderShell;
 renderShell = function(){ releaseShell(); const footer=document.querySelector('.aside-bottom');if(footer)footer.innerHTML=footer.innerHTML.replace(/LOCAL EDITION [\d.]+/g,'VERSION 1.0'); };
+newDialog('citationReview');
+const citationProfileView=renderProfile;renderProfile=function(){citationProfileView();citationProfilePanel()};
 render();if(!loadError&&rememberedAccount())enterWorkspace();else showLogin();

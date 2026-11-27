@@ -4,7 +4,9 @@ const progressPending=new Map();
 const progressTTL=20*60*1000;
 const elsevierOrigin='https://webapps.elsevier.cn';
 const progressLabel=()=>T('更新进展','Update progress','進捗を更新');
-const progressButton=r=>btn(progressLabel(),`type="button" data-progress="${esc(r.id)}"`);
+const progressButton=r=>r.status==='accept'
+ ?btn(citationButtonLabel(),`type="button" data-citation="${esc(r.id)}"`)
+ :btn(progressLabel(),`type="button" data-progress="${esc(r.id)}"`);
 const progressStatusName=()=>T('当前状态','Current status','現在の状況');
 const progressUnchanged=()=>T('暂时没有新进展。再等等，愿好消息早日到来 🌱','No new progress yet. Hang in there — here’s hoping for good news soon 🌱','まだ進展はありません。もう少し待ちましょう。良い知らせが届きますように 🌱');
 const progressRetry=()=>T('无法核对这次查询。请回到原稿件重新查询，或手动更新。','Could not verify this result. Reopen the query from the original submission or update manually.','結果を確認できません。元の投稿から再照会するか、手動で更新してください。');
@@ -71,6 +73,7 @@ function applyProgress(r,input,newRound,date,source){
  }]};
 }
 function showProgress(r,proposal=null){
+ if(r.status==='accept'){editCitations(r.id);return}
  const snapshot=progressSnapshot(r),isQuery=proposal!==null;
  const isRevision=REVISIONS.includes(r.status),choices=r.status==='complete'?['complete','accept','reject']:Object.keys(S).filter(s=>s===r.status||s!=='waiting'&&!CLOSED.includes(r.status));
  const suggested=proposal?.status;
@@ -145,58 +148,34 @@ function progressReturnUrl(){
 }
 function progressQueryUrl(r,p){
  const back=progressReturnUrl();
- if(!back||!progressChannel||!queryReady(p)||!unlocked)return queryUrl(p);
+ if(!back||!queryReady(p)||!unlocked)return queryUrl(p);
  const now=Date.now(),token=uid();
  const {round,...baseline}=progressSnapshot(r);
  for(const [key,entry] of progressPending)if(entry.expires<=now)progressPending.delete(key);
  progressPending.set(token,{id:r.id,account:accountStore.active,round,expires:now+progressTTL});
  return queryUrl({...p,progress:{token,back,number:r.number,baseline}});
 }
-let progressChannel=null;
-function receiveProgressReceipt(e){
- const msg=e.data;
- if(msg?.type!=='receipt'||typeof msg.token!=='string')return;
+function receiveProgressReceipt(msg){
  const entry=progressPending.get(msg.token);
- if(!entry)return;
- progressPending.delete(msg.token);
- const r=records.find(x=>x.id===entry.id),valid=entry.expires>Date.now()&&unlocked&&accountStore.active===entry.account&&r&&progressSnapshot(r).round===entry.round;
+ if(!entry)return false;
+ const r=records.find(x=>x.id===entry.id),valid=entry.expires>Date.now()&&unlocked&&accountStore.active===entry.account&&r&&r.status!=='accept'&&progressSnapshot(r).round===entry.round;
  const values=valid?progressResult(r,msg.result):null;
- if(!values||!Object.keys(values).length){progressChannel.postMessage({type:'reject',token:msg.token});return}
- if(msg.account!==entry.account){
-  if(Object.entries(values).some(([k,v])=>progressSnapshot(r)[k]!==v))showProgress(r,values);
-  else toast(progressUnchanged());
-  progressChannel.postMessage({type:'original',token:msg.token});return;
- }
- progressChannel.postMessage({type:'accept',token:msg.token,id:r.id,round:entry.round});
+ if(!values||!Object.keys(values).length)return false;
+ if(Object.entries(values).some(([k,v])=>progressSnapshot(r)[k]!==v))showProgress(r,values);
+ else toast(progressUnchanged());
+ progressPending.delete(msg.token);
+ return true;
 }
 document.addEventListener('click',e=>{
  const button=e.target.closest('[data-progress]');
  if(!button||!unlocked)return;
  const r=records.find(x=>x.id===button.dataset.progress);if(r)showProgress(r);
 });
-document.addEventListener('DOMContentLoaded',()=>{
- const prefix='#de-progress=',returning=location.hash.startsWith(prefix);
- let receipt=null;
- if(returning){
-  try{receipt=JSON.parse(decodeURIComponent(location.hash.slice(prefix.length)))}catch{}
-  history.replaceState(history.state,'',location.pathname+location.search);
- }
- if(!progressReturnUrl()||typeof BroadcastChannel!=='function'){if(returning)alert(progressRetry());return}
- progressChannel=new BroadcastChannel('dear-editor-elsevier-progress-v1');
- progressChannel.onmessage=receiveProgressReceipt;
- if(!returning)return;
- if(!receipt||typeof receipt.token!=='string'||receipt.token.length>100){alert(progressRetry());return}
- const timer=setTimeout(()=>{progressChannel.onmessage=receiveProgressReceipt;alert(progressRetry())},3500);
- progressChannel.onmessage=e=>{
-  const msg=e.data;
-  if(msg?.token!==receipt.token||!['original','reject','accept'].includes(msg.type))return;
-  clearTimeout(timer);progressChannel.onmessage=receiveProgressReceipt;
-  if(msg.type==='original'){alert(T('结果已送回原来的 Dear Editor 标签页，请切回查看。','Result sent to the original Dear Editor tab. Switch back to review it.','元のDear Editorタブで結果を確認してください。'));return}
-  const r=msg.type==='accept'&&unlocked&&records.find(x=>x.id===msg.id);
-  const values=r&&progressSnapshot(r).round===msg.round&&progressResult(r,receipt.result);
-  if(!values||!Object.keys(values).length){alert(progressRetry());return}
-  if(Object.entries(values).some(([k,v])=>progressSnapshot(r)[k]!==v))showProgress(r,values);
-  else toast(progressUnchanged());
- };
- progressChannel.postMessage({type:'receipt',token:receipt.token,account:unlocked?accountStore.active:null,result:receipt.result});
-});
+// The extension calls this only in open Dear Editor tabs at the exact launch origin.
+// Page-side one-use tokens ensure only the tab that initiated this lookup accepts it.
+window.receiveDearEditorLookup=function(msg){
+ if(!msg||typeof msg.token!=='string'||!msg.base||msg.base!==progressReturnUrl())return false;
+ if(msg.kind==='progress')return receiveProgressReceipt(msg);
+ if(msg.kind==='citation')return receiveCitationReceipt(msg);
+ return false;
+};

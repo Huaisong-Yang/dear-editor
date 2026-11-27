@@ -1,5 +1,6 @@
 """Dear Editor disk workspace (Python standard library, loopback only)."""
 import argparse
+from contextlib import contextmanager, nullcontext
 import hashlib
 import hmac
 import json
@@ -22,8 +23,21 @@ COOKIE = "de_local_session"
 MAX_BODY = 24 * 1024 * 1024
 STATIC = {
     "app.js", "app.css", "accounts.js", "languages.js", "local-mode.js", "local-memory.js",
-    "vendor/opencc-cn2t.js", "progress.js",
+    "vendor/opencc-cn2t.js", "progress.js", "citations.js",
 }
+PUBLIC_FEEDBACK_FIELDS = ("email", "phone", "wechat", "welcome", "wechatQr", "alipayQr")
+
+
+def public_feedback_script(path=ROOT / "demo.js"):
+    """Reuse only the project contact already shipped in the public demo."""
+    try:
+        source = path.read_text(encoding="utf-8-sig").split("const demo=", 1)[1]
+        demo = json.JSONDecoder().raw_decode(source.lstrip())[0]
+        feedback = demo["settings"]["feedback"]
+        fields = {k: feedback[k] for k in PUBLIC_FEEDBACK_FIELDS if isinstance(feedback.get(k), str)}
+    except (OSError, ValueError, IndexError, KeyError, TypeError, AttributeError):
+        fields = {}
+    return ("window.dearEditorProjectFeedback=" + json.dumps(fields, ensure_ascii=True) + ";\n").encode("ascii")
 
 
 class Problem(Exception):
@@ -48,6 +62,7 @@ class LocalServer(ThreadingHTTPServer):
         self.desktop = DesktopWidget(self.widget_dismissed)
         super().__init__(("127.0.0.1", port), Handler)
         self.db_path = db_path
+        self.public_feedback = public_feedback_script()
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.tabs = BrowserTabs()
         self.widget_events = WidgetEvents()
@@ -107,13 +122,14 @@ class LocalServer(ThreadingHTTPServer):
 class BrowserTabs:
     startup_grace = 90
     lease = 180
-    close_grace = 10
+    close_grace = 2
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
         self.lock = threading.Lock()
         self.tabs = {}
         self.deadline = clock() + self.startup_grace
+        self.pending_writes = 0
 
     def update(self, body):
         tab, sequence, active = body.get("tab"), body.get("sequence"), body.get("active")
@@ -131,8 +147,18 @@ class BrowserTabs:
             self.tabs[tab] = (sequence, now + self.lease, active)
             if active:
                 self.deadline = now + self.lease
-            elif previous and previous[2]:
+            elif not previous or previous[2]:
                 self.deadline = max((t[1] for t in self.tabs.values() if t[2]), default=now + self.close_grace)
+
+    @contextmanager
+    def writing(self):
+        with self.lock:
+            self.pending_writes += 1
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.pending_writes -= 1
 
     def prune(self, now):
         self.tabs = {key: value for key, value in self.tabs.items() if value[1] > now}
@@ -141,7 +167,7 @@ class BrowserTabs:
         with self.lock:
             now = self.clock()
             self.prune(now)
-            return now >= self.deadline and not any(t[2] for t in self.tabs.values())
+            return now >= self.deadline and not self.pending_writes and not any(t[2] for t in self.tabs.values())
 
 class WidgetEvents:
     """Wake the account's browser tabs when its desktop preference changes."""
@@ -224,12 +250,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(200, self.result(self.account(db), db))
             elif path in ("/", "/index.html"):
                 html = (ROOT / "index.html").read_text(encoding="utf-8")
-                html = re.sub(r'<script src="demo\.js"></script>', '', html)
+                html = html.replace('<script src="demo.js"></script>', '<script src="project-feedback.js"></script>')
                 html = html.replace('<script src="accounts.js"></script>',
                                     '<script src="local-memory.js"></script><script src="accounts.js"></script>')
                 html = html.replace('<script src="app.js"></script>',
                                     '<script src="app.js"></script><script src="local-mode.js"></script>')
                 self.reply(200, html.encode(), "text/html; charset=utf-8")
+            elif path == "/project-feedback.js":
+                self.reply(200, self.server.public_feedback, "application/javascript; charset=utf-8")
             elif path[1:] in STATIC:
                 file = ROOT / path[1:]
                 self.reply(200, file.read_bytes(), mimetypes.guess_type(file)[0] or "application/octet-stream")
@@ -256,9 +284,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise Problem(400, "请求格式不正确。")
-            response, cookie = self.action(body)
-            if self.path == "/api/save":
-                self.server.desktop.refresh(body["id"], response["revision"], body["workspace"]["settings"].get("widgets"))
+            mutating = self.path in ("/api/save", "/api/register", "/api/login", "/api/logout", "/api/delete", "/api/desktop-widget")
+            with self.server.tabs.writing() if mutating else nullcontext():
+                response, cookie = self.action(body)
+                if self.path == "/api/save":
+                    self.server.desktop.refresh(body["id"], response["revision"], body["workspace"]["settings"].get("widgets"))
             self.reply(200, response, cookie=cookie)
         except Problem as exc:
             self.reply(exc.status, {"error": exc.message})
@@ -428,7 +458,7 @@ def main():
             webbrowser.open(server.origin)
         try:
             if args.auto_exit:
-                server.timeout = 0.5
+                server.timeout = 0.25
                 while not server.tabs.expired():
                     server.handle_request()
                 print("Dear Editor: no active browser tabs. Closing.", flush=True)
