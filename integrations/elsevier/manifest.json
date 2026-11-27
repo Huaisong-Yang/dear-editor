@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Dear Editor · Elsevier",
+  "description": "投个好稿 / まだ査読中：预填 Elsevier 查询并在手动验证后读取结果。",
+  "version": "4.1.3",
+  "content_scripts": [
+    {
+      "matches": ["https://webapps.elsevier.cn/st-wechat/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
