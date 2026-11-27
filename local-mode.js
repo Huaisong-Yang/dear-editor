@@ -13,10 +13,10 @@ function diskTabSignal(active){
 }
 diskTabSignal(true);
 setInterval(()=>{if(diskTabActive)diskTabSignal(true)},15000);
-window.addEventListener('pagehide',()=>{diskTabActive=false;diskTabSignal(false)});
-window.addEventListener('pageshow',()=>{diskTabActive=true;diskTabSignal(true)});
+window.addEventListener('pagehide',()=>{diskTabActive=false;diskTabSignal(false);diskWidgetStopEvents()});
+window.addEventListener('pageshow',e=>{diskTabActive=true;diskTabSignal(true);if(e.persisted)diskWidgetListen()});
 document.addEventListener('visibilitychange',()=>{if(diskTabActive)diskTabSignal(true)});
-let diskSession=null;
+let diskSession=null,diskDesktopAvailable=false,diskDesktopEnabled=false,diskWidgetEvents=null;
 const diskKeys=[KEY,AUTHORS_KEY,PROFILE_KEY,SETTINGS_KEY];
 function diskRequest(action,body){
  // Writes are synchronous so the existing editor never closes or reports
@@ -40,10 +40,15 @@ function diskOpenSession(session){
   if(value==null)localStorage.removeItem(key);else localStorage.setItem(key,JSON.stringify(value));
  }
  loadAccount(session.id);diskSession={id:session.id,revision:session.revision};
+ diskDesktopAvailable=session.desktopAvailable===true;
+ diskDesktopEnabled=session.desktopEnabled===true;
  enterWorkspace();
+ diskWidgetListen();
+ if(diskDesktopEnabled)diskDesktopChange(true,true).catch(()=>{});
 }
 function diskForgetSession(){
- diskSession=null;accountStore.native.clear();clearDeletedSession();
+ diskWidgetStopEvents();diskSession=null;diskDesktopAvailable=false;diskDesktopEnabled=false;
+ accountStore.native.clear();clearDeletedSession();
 }
 const diskShowLogin=showLogin;
 showLogin=function(register=false){
@@ -67,6 +72,71 @@ renderBackup=function(){
  const section=document.createElement('section');section.className='panel';
  section.innerHTML='<h2>本地数据库自动保存</h2><p class="note">每次成功保存都已写入电脑。清除浏览器网站数据后，只需用这个本地账号重新登录。导出备份仅用于迁移或防止磁盘故障；旧备份可恢复到当前账号。</p>';
  $('content').prepend(section);
+};
+const diskWidgetSettings=widgetSettings;
+const diskWidgetTheme=()=>document.documentElement.dataset.theme==='dark'?'dark':'light';
+const diskWidgetPost=(action,body,signal)=>fetch('/api/'+action,{method:'POST',signal,
+ headers:{'Content-Type':'application/json','X-Dear-Editor-Local':'1'},body:JSON.stringify(body)});
+async function diskDesktopChange(enabled,automatic=false){
+ const owner=diskSession.id,labels={
+  title:T('作息进度','Schedule progress','作業進捗'),rest:T('休息中','On a break','休憩中'),
+  off:T('休息日','Day off','休日'),done:T('今日已结束','Done for today','本日の作業は終了'),
+  free:T('自由安排','Unscheduled','予定なし'),remaining:T('剩余','Remaining','残り'),
+  next:T('上班倒计时','Back to work in','作業開始まで'),
+  countdowns:T('倒计时','Countdowns','カウントダウン'),todos:T('待办事项','To-dos','やること'),
+  vacation:T('假期','Vacation','休暇'),empty:T('暂无安排','Nothing scheduled','予定なし'),
+  weekend:T('周末 / 下一休息日','Next day off','次の休日'),today_off:T('今天休息','Today is a day off','今日は休日'),
+  unset:T('待设置','Not set','未設定')
+ };
+ const response=await diskWidgetPost('desktop-widget',{id:owner,enabled,automatic,labels,theme:diskWidgetTheme()});
+ const state=await response.json();
+ if(!response.ok)throw Error(state.error);
+ if(owner===diskSession?.id)diskWidgetState(state.enabled);
+}
+function diskWidgetState(enabled){
+ diskDesktopEnabled=enabled===true;
+ const input=$('widget-desktop');if(input&&!input.disabled)input.checked=diskDesktopEnabled;
+}
+function diskWidgetStopEvents(){
+ const watcher=diskWidgetEvents;diskWidgetEvents=null;watcher?.request?.abort();
+}
+async function diskWidgetListen(){
+ if(!diskDesktopAvailable||!diskSession||!diskTabActive)return;
+ diskWidgetStopEvents();
+ const watch={id:diskSession.id,cursor:null,request:null};diskWidgetEvents=watch;
+ while(diskWidgetEvents===watch&&diskTabActive){
+  const request=new AbortController();watch.request=request;
+  try{
+   const response=await diskWidgetPost('desktop-events',{id:watch.id,cursor:watch.cursor},request.signal);
+   if([401,409].includes(response.status))return;
+   if(!response.ok)throw Error('Desktop event stream not available');
+   const event=await response.json();
+   if(diskWidgetEvents!==watch||request.signal.aborted)continue;
+   watch.cursor=event.cursor;diskWidgetState(event.enabled);
+  }catch(ex){
+   if(ex.name!=='AbortError')await new Promise(resolve=>setTimeout(resolve,1800));
+  }
+ }
+}
+let widgetThemeLast=diskWidgetTheme();
+new MutationObserver(()=>{
+ const theme=diskWidgetTheme();
+ if(theme===widgetThemeLast)return;
+ widgetThemeLast=theme;
+ if(!diskSession||!diskDesktopAvailable)return;
+ diskWidgetPost('desktop-widget',{id:diskSession.id,theme}).catch(()=>{});
+}).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+widgetSettings=function(){
+ diskWidgetSettings();
+ if(!diskDesktopAvailable)return;
+ const label=T('桌面进度浮窗','Desktop progress widget','デスクトップ進捗ウィジェット');
+ $('widgetForm').querySelector('.widget-toggles').insertAdjacentHTML('beforeend',widgetToggle('desktop',label,diskDesktopEnabled));
+ const input=$('widget-desktop');
+ input.onchange=async ()=>{
+  input.disabled=true;
+  try{await diskDesktopChange(input.checked)}catch(ex){$('widgetError').textContent=ex.message}
+  finally{input.checked=diskDesktopEnabled;input.disabled=false}
+ };
 };
 function diskSnapshot(){
  return {records,library,profile,settings,loadError,stored:diskKeys.map(k=>[k,localStorage.getItem(k)])};

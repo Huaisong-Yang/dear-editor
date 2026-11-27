@@ -36,7 +36,7 @@ function applyProgress(r,input,newRound,date,source){
  const rounds=r.rounds.map(q=>({...q})),status=input.status||r.status;
  const advancing=['we','ur','rrc'].includes(status);
  const requireNew=REVISIONS.includes(r.status)&&advancing;
- if(!dateOK(date)||newRound&&!date)fail('请为重新提交填写有效日期','Enter a valid resubmission date','有効な再投稿日を入力してください');
+ if(!date||!dateOK(date))fail('请输入有效的更新日期','Enter a valid update date','有効な更新日を入力してください');
  if(requireNew&&!newRound)fail('返修后进入新阶段，请确认开启新一轮','Confirm a new round after resubmission','再投稿後の新しいラウンドを確認してください');
  if(newRound&&(!REVISIONS.includes(r.status)||!advancing))fail('开启新一轮时请选择返修重投后的阶段','Choose the stage reached after resubmission','再投稿後の状況を選択してください');
  if(CLOSED.includes(r.status)&&status!==r.status&&!(r.status==='complete'&&['accept','reject'].includes(status)))fail('如需修改已结束稿件的状态，请使用「编辑」','Use Edit to change a closed submission’s status','終了した投稿の状況変更には「編集」を使用してください');
@@ -67,7 +67,7 @@ function applyProgress(r,input,newRound,date,source){
  if(!changes.length)return null;
  const error=q&&roundError(q);if(error)throw Error(error);
  return {...r,status,rounds,accepted,updated:today(),history:[...r.history,{
-  kind:'progress',source,date:date||today(),stageDate:date,text:'',status,changes,round:q?.index||0,at:new Date().toISOString()
+   kind:'progress',source,date,stageDate:date,text:'',status,changes,round:q?.index||0,at:new Date().toISOString()
  }]};
 }
 function showProgress(r,proposal=null){
@@ -75,19 +75,29 @@ function showProgress(r,proposal=null){
  const isRevision=REVISIONS.includes(r.status),choices=r.status==='complete'?['complete','accept','reject']:Object.keys(S).filter(s=>s===r.status||s!=='waiting'&&!CLOSED.includes(r.status));
  const suggested=proposal?.status;
  const startNew=isRevision&&['we','ur','rrc'].includes(suggested);
+ const authors=r.authors.filter(a=>a.corresponding&&queryReady(queryPayload(r,a.id)));
  modal('progress',progressLabel(),`<h3>${esc(r.title)}</h3><p class="note">${esc(stateName(r.status))} · ${r.rounds.length?`${txt.round()} ${r.rounds.length}`:'—'}</p>
- ${isQuery?`<p class="note">${T('已读取 Elsevier 结果，请核对差异；确认前不会保存。','Elsevier result loaded. Review the differences before saving.','Elsevierの結果を確認してから保存してください。')}</p>`:''}
- ${suggested==='complete'||r.status==='complete'?`<p class="note">${T('Complete 不代表录用或拒稿。请以期刊决定信为准。','Complete does not indicate acceptance or rejection. Check the journal’s decision letter.','Completeだけでは採否は分かりません。雑誌の判定通知を確認してください。')}</p>`:''}
  ${suggested&&!choices.includes(suggested)?`<p class="warning">${esc(progressStatusName()+': '+stateName(suggested))} · ${T('如需更正状态，请使用「编辑」。','Use Edit to correct this status.','状況の訂正には「編集」を使ってください。')}</p>`:''}
- <form id="progressForm"><div class="form-grid">
+ <form id="progressForm" data-keep-actions><div class="form-grid">
  ${select('progressStatus',progressStatusName(),choices.map(s=>[s,stateName(s)]),choices.includes(suggested)?suggested:r.status)}
- ${field('progressDate',T('发生日期（如已知）','Event date (if known)','発生日（分かる場合）'),'','date')}
+ ${field('progressDate',T('更新日期','Update date','更新日'),today(),'date','required')}
  ${isRevision?`<label class="field full"><span><input type="checkbox" id="progressNewRound"> ${T('返修后重新提交：开启下一轮','Resubmitted after revision: start a new round','修正後に再投稿：新しいラウンドを開始')}</span></label>`:''}
- ${progressKeys.map(k=>`<div>${field('progress-'+k,ROUND_LABELS[k](),'','number','min="0" step="1"')}${btn('+1',`type="button" data-progress-plus="${k}"`)}</div>`).join('')}
- </div><p class="help">${T('人数填写最新总数；留空不修改。已知人数才可用 +1。','Enter the latest totals; leave blank to keep existing values. +1 requires a known count.','最新の合計を入力してください。空欄は変更なし。+1は件数が分かる場合のみ使えます。')}</p>
+ ${progressKeys.map(k=>field('progress-'+k,ROUND_LABELS[k](),'','number','min="0" step="1"')).join('')}
+ </div>
  <div id="progressDiff" aria-live="polite"></div><p id="progressError" class="warning hidden" role="alert"></p>
- <div class="modal-foot">${btn(txt.cancel(),'type="button" data-close="progress"')}${btn(T('确认保存','Confirm and save','確認して保存'),'type="submit" id="progressSave"',true)}</div></form>`);
+ <div class="modal-foot progress-actions">
+ ${authors.length>1?select('progressQueryAuthor',T('通讯作者','Corresponding author','責任著者'),authors.map(a=>[a.id,a.name]),authors[0].id):''}
+ ${authors.length?`<a class="btn" id="progressQueryOpen" target="_blank" rel="noopener noreferrer">${T('Elsevier 查询 ↗','Query Elsevier ↗','Elsevierで照会 ↗')}</a>`:''}
+ ${btn(txt.cancel(),'type="button" data-close="progress"')}${btn(T('确认保存','Confirm and save','確認して保存'),'type="submit" id="progressSave"',true)}</div></form>`);
  const form=$('progressForm'),status=$('progressStatus'),newRound=$('progressNewRound'),date=$('progressDate');
+ const query=$('progressQueryOpen'),author=$('progressQueryAuthor');
+ if(query){
+  const payload=()=>queryPayload(r,author?.value||authors[0].id);
+  const sync=()=>{query.href=queryUrl(payload())};
+  if(author)author.onchange=sync;
+  query.onclick=()=>{query.href=progressQueryUrl(r,payload())};
+  sync();
+ }
  if(startNew)newRound.checked=true;
  const read=()=>{
   const input={status:status.value};
@@ -100,7 +110,6 @@ function showProgress(r,proposal=null){
    const el=$('progress-'+k),base=fresh?null:snapshot[k];
    if(reset)el.value=proposal&&Object.hasOwn(proposal,k)?proposal[k]:'';
    el.placeholder=progressValue(k,base);
-   form.querySelector(`[data-progress-plus="${k}"]`).disabled=el.value===''&&base===null;
   }
   const values=read(),rows=[];
   if(fresh)rows.push(`<li><strong>${T('开启新一轮','Start a new round','新しいラウンドを開始')}: ${r.rounds.length} → ${r.rounds.length+1}</strong></li>`);
@@ -112,13 +121,8 @@ function showProgress(r,proposal=null){
   $('progressDiff').innerHTML=rows.length?`<ul class="progress-diff">${rows.join('')}</ul>`:'';
   $('progressSave').disabled=!rows.length;
  }
- date.required=!!newRound?.checked;
- if(newRound)newRound.onchange=()=>{date.required=newRound.checked;refresh(!isQuery)};
+ if(newRound)newRound.onchange=()=>refresh(!isQuery);
  form.oninput=()=>refresh();
- form.querySelectorAll('[data-progress-plus]').forEach(button=>button.onclick=()=>{
-  const k=button.dataset.progressPlus,el=$('progress-'+k),value=el.value===''?(newRound?.checked?null:snapshot[k]):Number(el.value);
-  if(Number.isSafeInteger(value)&&value>=0&&value<Number.MAX_SAFE_INTEGER){el.value=value+1;refresh()}
- });
  form.onsubmit=e=>{
   e.preventDefault();const error=$('progressError');error.classList.add('hidden');
   try{

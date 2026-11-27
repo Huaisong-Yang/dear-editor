@@ -15,6 +15,7 @@ import uuid
 import webbrowser
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from desktop_widget import DesktopWidget
 
 ROOT = Path(__file__).resolve().parent
 COOKIE = "de_local_session"
@@ -44,10 +45,12 @@ def credentials(body, register=False):
 
 class LocalServer(ThreadingHTTPServer):
     def __init__(self, port, db_path):
+        self.desktop = DesktopWidget(self.widget_dismissed)
         super().__init__(("127.0.0.1", port), Handler)
         self.db_path = db_path
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.tabs = BrowserTabs()
+        self.widget_events = WidgetEvents()
         with self.db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -58,8 +61,35 @@ class LocalServer(ThreadingHTTPServer):
                     token TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
                     expires INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS desktop_preferences (
+                    owner TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+                    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1))
+                );
             """)
             db.execute("DELETE FROM sessions WHERE expires <= ?", (int(time.time()),))
+
+    def server_close(self):
+        self.desktop.shutdown()
+        if hasattr(self, "widget_events"):
+            self.widget_events.close()
+        super().server_close()
+
+    @staticmethod
+    def widget_enabled(db, row):
+        value = db.execute("SELECT enabled FROM desktop_preferences WHERE owner=?", (row["id"],)).fetchone()
+        if value is not None:
+            return bool(value["enabled"])
+        widgets = (json.loads(row["workspace"]).get("settings") or {}).get("widgets")
+        return not isinstance(widgets, dict) or widgets.get("desktop") is not False
+
+    def set_widget_enabled(self, owner, enabled):
+        with self.db() as db:
+            db.execute("INSERT INTO desktop_preferences(owner,enabled) SELECT id,? FROM accounts WHERE id=? "
+                       "ON CONFLICT(owner) DO UPDATE SET enabled=excluded.enabled", (int(enabled), owner))
+        self.widget_events.publish(owner)
+
+    def widget_dismissed(self, owner):
+        self.set_widget_enabled(owner, False)
 
     def db(self):
         from contextlib import closing, contextmanager
@@ -113,10 +143,33 @@ class BrowserTabs:
             self.prune(now)
             return now >= self.deadline and not any(t[2] for t in self.tabs.values())
 
+class WidgetEvents:
+    """Wake the account's browser tabs when its desktop preference changes."""
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.events = {}
+        self.closed = False
+
+    def publish(self, owner):
+        with self.condition:
+            self.events[owner] = self.events.get(owner, 0) + 1
+            self.condition.notify_all()
+
+    def wait(self, owner, cursor, timeout=20):
+        with self.condition:
+            if cursor is not None and cursor == self.events.get(owner, 0):
+                self.condition.wait_for(lambda: self.closed or self.events.get(owner, 0) != cursor, timeout)
+            return self.events.get(owner, 0)
+
+    def close(self):
+        with self.condition:
+            self.closed = True
+            self.condition.notify_all()
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_request(self, code="-", size="-"):
-        if self.path not in ("/api/tab", "/api/tab-close"):
+        if self.path not in ("/api/tab", "/api/tab-close", "/api/desktop-events"):
             super().log_request(code, size)
 
     def reply(self, status, body, content_type="application/json; charset=utf-8", cookie=None):
@@ -130,8 +183,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         if cookie is not None:
             self.send_header("Set-Cookie", cookie)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            # A local tab can close while its widget event request is pending.
+            pass
 
     def token(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -146,9 +203,9 @@ class Handler(BaseHTTPRequestHandler):
             raise Problem(401, "请重新登录本地工作空间。")
         return row
 
-    @staticmethod
-    def result(row):
-        return {"id": row["id"], "revision": row["revision"], "workspace": json.loads(row["workspace"])}
+    def result(self, row, db):
+        return {"id": row["id"], "revision": row["revision"], "workspace": json.loads(row["workspace"]),
+                "desktopAvailable": os.name == "nt", "desktopEnabled": self.server.widget_enabled(db, row)}
 
     def checked(self, post=False):
         if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
@@ -164,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             path = self.path.split("?", 1)[0]
             if path == "/api/session":
                 with self.server.db() as db:
-                    self.reply(200, self.result(self.account(db)))
+                    self.reply(200, self.result(self.account(db), db))
             elif path in ("/", "/index.html"):
                 html = (ROOT / "index.html").read_text(encoding="utf-8")
                 html = re.sub(r'<script src="demo\.js"></script>', '', html)
@@ -185,19 +242,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            self.checked(post=True)
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= MAX_BODY:
                 raise Problem(413, "提交的数据为空或超出 24 MB。")
+            try:
+                self.checked(post=True)
+            except Problem:
+                # Drain small rejected requests so Windows does not reset the
+                # connection before the client receives the error response.
+                if size <= 4096:
+                    self.rfile.read(size)
+                raise
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise Problem(400, "请求格式不正确。")
             response, cookie = self.action(body)
+            if self.path == "/api/save":
+                self.server.desktop.refresh(body["id"], response["revision"], body["workspace"]["settings"].get("widgets"))
             self.reply(200, response, cookie=cookie)
         except Problem as exc:
             self.reply(exc.status, {"error": exc.message})
         except (ValueError, TypeError):
             self.reply(400, {"error": "请求格式不正确。"})
+        except ConnectionError:
+            pass
         except sqlite3.Error:
             self.reply(500, {"error": "无法写入本地数据库。请检查磁盘空间和权限后重试。"})
 
@@ -209,7 +277,62 @@ class Handler(BaseHTTPRequestHandler):
                 raise Problem(400, "此接口仅用于关闭标签页。")
             self.server.tabs.update(body)
             return {}, None
+        if route == "/api/desktop-events":
+            cursor = body.get("cursor")
+            if cursor is not None and (type(cursor) is not int or cursor < 0):
+                raise Problem(400, "浮窗事件请求格式不正确。")
+            with self.server.db() as db:
+                row = self.account(db)
+                if body.get("id") != row["id"]:
+                    raise Problem(409, "此页面的账号已变化，请刷新后重试。")
+                owner = row["id"]
+            cursor = self.server.widget_events.wait(owner, cursor)
+            with self.server.db() as db:
+                row = self.account(db)
+                if owner != row["id"]:
+                    raise Problem(409, "此页面的账号已变化，请刷新后重试。")
+                return {"cursor": cursor, "enabled": self.server.widget_enabled(db, row)}, None
         with self.server.db() as db:
+            if route == "/api/desktop-widget":
+                row = self.account(db)
+                if body.get("id") != row["id"]:
+                    raise Problem(409, "此页面的账号已变化，请刷新后重试。")
+                enabled = body.get("enabled")
+                if enabled is not None and type(enabled) is not bool:
+                    raise Problem(400, "浮窗请求格式不正确。")
+                automatic = body.get("automatic", False)
+                if type(automatic) is not bool:
+                    raise Problem(400, "浮窗请求格式不正确。")
+                theme = body.get("theme")
+                if theme is not None and theme not in ("light", "dark"):
+                    raise Problem(400, "浮窗配色无效。")
+                if os.name != "nt":
+                    return {"available": False, "visible": False}, None
+                wanted = self.server.widget_enabled(db, row)
+                if enabled is True:
+                    fields = ("title", "rest", "off", "done", "free", "remaining", "next",
+                              "countdowns", "todos", "vacation", "empty", "weekend", "today_off", "unset")
+                    supplied = body.get("labels")
+                    labels = {k: supplied[k][:80] for k in fields
+                              if isinstance(supplied, dict) and isinstance(supplied.get(k), str) and supplied[k].strip()}
+                    widgets = (json.loads(row["workspace"]).get("settings") or {}).get("widgets")
+                    if automatic and not wanted:
+                        return {"available": True, "enabled": False, "visible": False}, None
+                    if not automatic:
+                        self.server.set_widget_enabled(row["id"], True)
+                    try:
+                        self.server.desktop.open(row["id"], row["revision"], widgets, labels, theme or "light", automatic)
+                    except RuntimeError as exc:
+                        if not automatic:
+                            self.server.set_widget_enabled(row["id"], wanted)
+                        raise Problem(409, str(exc)) from exc
+                elif enabled is False:
+                    self.server.set_widget_enabled(row["id"], False)
+                    self.server.desktop.close(row["id"])
+                elif theme is not None:
+                    self.server.desktop.set_theme(row["id"], theme)
+                return {"available": True, "enabled": self.server.widget_enabled(db, row),
+                        "visible": self.server.desktop.visible(row["id"])}, None
             if route in ("/api/login", "/api/register"):
                 register = route == "/api/register"
                 username, password = credentials(body, register)
@@ -230,13 +353,18 @@ class Handler(BaseHTTPRequestHandler):
                     if not profile or not hmac.compare_digest(password_digest(password, profile["salt"]), profile["hash"]):
                         raise Problem(401, "用户名或密码错误。")
                 token = secrets.token_urlsafe(32)
+                last_owner = db.execute("SELECT owner FROM sessions WHERE token=?", (self.token(),)).fetchone()
+                if last_owner and last_owner["owner"] != row["id"]:
+                    self.server.desktop.close(last_owner["owner"], signout=True)
                 db.execute("DELETE FROM sessions WHERE token=?", (self.token(),))
                 db.execute("INSERT INTO sessions VALUES (?,?,?)", (token, row["id"], int(time.time()) + 86400))
-                return self.result(row), f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
+                return self.result(row, db), f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
             if route == "/api/logout":
                 authenticated = db.execute("SELECT owner FROM sessions WHERE token=?", (self.token(),)).fetchone()
                 if authenticated and body.get("id") != authenticated["owner"]:
                     raise Problem(409, "此页面的账号已变化，请刷新页面。")
+                if authenticated:
+                    self.server.desktop.close(authenticated["owner"], signout=True)
                 db.execute("DELETE FROM sessions WHERE token=?", (self.token(),))
                 return {}, f"{COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"
             if route not in ("/api/save", "/api/delete"):
@@ -249,6 +377,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise Problem(409, "此账号已在另一页面更新。请刷新后重试，本次修改未保存。")
             if route == "/api/delete":
                 self.verify_current_password(row, body)
+                self.server.desktop.close(row["id"], signout=True)
                 db.execute("DELETE FROM accounts WHERE id=?", (row["id"],))
                 return {}, f"{COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"
             workspace = body.get("workspace")

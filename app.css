@@ -159,6 +159,21 @@ html[data-theme=dark] .self-profile-badge{background:#315747;color:#c5f2db}
 #progressNewRound{width:auto;accent-color:var(--green)}
 .progress-diff{list-style:none;padding:10px 14px;border:1px solid var(--line);border-inline-start:4px solid var(--green);border-radius:8px;font-variant-numeric:tabular-nums}
 #progressError{margin-top:12px}
+.progress-actions{align-items:end;flex-wrap:wrap}
+.progress-actions .field{margin:0}
+.progress-actions a.btn{text-decoration:none}
+.widget-toggles{gap:10px 16px;margin-block:14px 20px}
+.widget-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;padding:11px 13px;border:1px solid var(--line);border-radius:13px;cursor:pointer;color:var(--ink)}
+.widget-toggle input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.widget-switch-track{display:block;width:43px;height:25px;flex:none;border-radius:99px;background:#9ca8ad;transition:background .18s}
+.widget-switch-track:after{content:"";display:block;width:19px;height:19px;margin:3px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #0004;transition:transform .23s cubic-bezier(.2,.85,.25,1)}
+.widget-toggle input:checked + .widget-switch-track{background:#24835e}
+.widget-toggle input:checked + .widget-switch-track:after{transform:translateX(18px)}
+.widget-toggle input:focus-visible + .widget-switch-track{outline:3px solid #76bba3;outline-offset:3px}
+.widget-toggle input:disabled + .widget-switch-track{opacity:.6}
+@media(prefers-reduced-motion:reduce){.widget-switch-track,.widget-switch-track:after{transition:none}}
+.countdown-stack > :has(#phaseCountdown){flex-wrap:wrap;column-gap:10px;row-gap:3px}
+#phaseCountdown{white-space:normal;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .state-complete{border-left-color:#9cabb6}
 .badge.complete{background:#edf0f3;color:#536573}
 html[data-theme=dark] .badge.complete{background:#334253;color:#e1e9f2}

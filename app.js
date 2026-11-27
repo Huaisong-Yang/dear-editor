@@ -637,7 +637,6 @@ drawRounds=function(){
  v3DrawRounds();
  $('roundRows').querySelectorAll('[data-round-index]').forEach(row=>{
   const sub=row.querySelector('[data-key="submitted"]'),we=row.querySelector('[data-key="we"]');
-  const label=we.previousElementSibling;label.insertAdjacentHTML('afterend',`<small class="note">${T('默认与本轮提交同日；可单独修改','Defaults to the submission date; editable','提出日と同日が既定値・変更可')}</small>`);
   const previous=sub.value;
   sub.dataset.previous=previous;
   sub.addEventListener('change',()=>{
@@ -1162,6 +1161,15 @@ function phaseAt(d,w=widgetData()){
  const next=parts.find(p=>timeMinute(p.start)>m);return {name:next?(m<timeMinute(parts[0].start)?'早间休息':next===parts[1]?'午休':'晚餐休息'):'今日已结束',end:next?new Date(`${localDay(d)}T${next.start}`):null,greeting:next===parts[1]?'午休时间，吃好饭，再睡个好觉。':next?'休息一下，下一阶段不必着急。':'今天辛苦了，早点休息，明天再等好消息。'};
 }
 function restTarget(d,w){if(offDay(d,w))return d;const n=new Date(d);n.setHours(0,0,0,0);for(let i=0;i<370;i++){n.setDate(n.getDate()+1);if(offDay(n,w))return n}return null}
+function nextWorkStart(now,w){
+ if(!w.schedule.length)return null;
+ const day=new Date(now);day.setHours(0,0,0,0);
+ for(let i=0;i<371;i++,day.setDate(day.getDate()+1)){
+  if(offDay(day,w))continue;
+  for(const phase of w.schedule){const start=new Date(`${localDay(day)}T${phase.start}`);if(start>now)return start}
+ }
+ return null;
+}
 function remaining(target,precision,now=new Date()){
  if(!target)return '待设置';let s=Math.max(0,Math.ceil((new Date(target)-now)/1000));if(!Number.isFinite(s))return '待设置';
  const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),sec=s%60;
@@ -1255,7 +1263,11 @@ renderOverview=function(){
  const tick=()=>{const now=new Date(),p=phaseAt(now,w),m=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
  $('liveDate').textContent=now.toLocaleDateString(lang==='en'?'en-GB':lang==='ja'?'ja-JP':'zh-CN',{month:'long',day:'numeric',weekday:'long'});$('phaseLabel').textContent=p.name;
  if($('liveClock')){$('liveClock').textContent=now.toLocaleTimeString('zh-CN',{hour12:false});$('dailyGreeting').textContent=p.greeting;$('seasonGreeting').textContent=w.seasons[Math.floor((now.getMonth()+10)%12/3)];area.querySelectorAll('[data-phase-index]').forEach(el=>{const phase=w.schedule[Number(el.dataset.phaseIndex)],start=timeMinute(phase.start),end=timeMinute(phase.end);el.classList.toggle('current',!offDay(now,w)&&m>=start&&m<end);el.style.setProperty('--progress',Math.max(0,Math.min(100,(m-start)/(end-start)*100))+'%')})}
-  if($('phaseCountdown')){$('phaseCountdown').textContent=p.end?remaining(p.end):p.name;$('weekendCountdown').textContent=offDay(now,w)?'今天休息':remaining(restTarget(now,w));$('vacationCountdown').textContent=remaining(w.vacation)}area.querySelectorAll('[data-clock-target]').forEach(el=>el.textContent=remaining(el.dataset.clockTarget));if(typeof sortCountdowns==='function')sortCountdowns();};tick();clockTimer=setInterval(tick,1000);
+   if($('phaseCountdown')){
+    const working=!offDay(now,w)&&w.schedule.some(q=>m>=timeMinute(q.start)&&m<timeMinute(q.end)),target=working?p.end:(p.end||nextWorkStart(now,w));
+    $('phaseCountdown').previousElementSibling.textContent=working?T('本阶段倒计时','Current phase countdown','現在の段階の残り時間'):T('上班倒计时','Back to work in','作業開始まで');
+    $('phaseCountdown').textContent=target?remaining(target):p.name;$('weekendCountdown').textContent=offDay(now,w)?'今天休息':remaining(restTarget(now,w));$('vacationCountdown').textContent=remaining(w.vacation)
+   }area.querySelectorAll('[data-clock-target]').forEach(el=>el.textContent=remaining(el.dataset.clockTarget));if(typeof sortCountdowns==='function')sortCountdowns();};tick();clockTimer=setInterval(tick,1000);
 };
 const v7Widgets=widgetSettings;widgetSettings=function(){v7Widgets();$('precision').closest('.field').hidden=true;$('winter').closest('.field').hidden=true;$('summer').closest('.field').hidden=true;$('winter').closest('.form-grid').insertAdjacentHTML('beforeend',field('vacation','假期开始',widgetData().vacation,'datetime-local'));const submit=$('widgetForm').onsubmit;$('widgetForm').onsubmit=e=>{const value=$('vacation').value;const writer=writeAll;writeAll=function(rs,people,p,options){options.nextSettings.widgets.vacation=value;return writer(rs,people,p,options)};try{submit(e)}finally{writeAll=writer}}};
 const v7Countdown=editCountdown;editCountdown=function(id){v7Countdown(id);$('c-precision').closest('.field').hidden=true};
@@ -1283,18 +1295,30 @@ phaseAt=function(d,w=widgetData()){
 };
 const v8Overview=renderOverview;renderOverview=function(){
  v8Overview();const area=$('homeWidgetArea'),extras=area.querySelector('.compact-extras'),strip=area.querySelector('.countdown-strip');
- if(strip){strip.className='countdown-stack';strip.children[0].querySelector('small').textContent='休息';strip.children[1].querySelector('small').textContent='周末';extras.prepend(strip)}
+  if(strip){strip.className='countdown-stack';strip.children[1].querySelector('small').textContent='周末';extras.prepend(strip)}
  area.querySelectorAll('[data-phase-index]').forEach(el=>{const i=Number(el.dataset.phaseIndex),p=widgetData().schedule[i],style=phaseStyle(p.start);el.classList.add(style);el.querySelector('span').innerHTML=`<em class="sky-orb" aria-hidden="true">${style==='moonlight'?'☾':'☀'}</em> ${esc(p.name)}`});
  applyTheme();
 };
+function widgetToggle(key,label,checked){
+ return `<label class="widget-toggle"><span>${esc(label)}</span><input type="checkbox" role="switch" id="widget-${key}" ${checked?'checked':''}><span class="widget-switch-track" aria-hidden="true"></span></label>`;
+}
 widgetSettings=function(){const w=widgetData();let schedule=clone(w.schedule);
- modal('widgetSettings','组件与作息',`<form id="widgetForm"><div class="form-grid">${[['clock','时间轴'],['countdowns','倒计时'],['todo','待办事项']].map(([k,n])=>`<label class="option-row"><input type="checkbox" id="widget-${k}" ${w[k]?'checked':''}>${n}</label>`).join('')}</div><div class="section-heading"><h3>每日作息</h3>${btn('＋ 添加阶段','type="button" id="addPhase"')}</div><div id="scheduleRows"></div><p class="note">可自由增删阶段；保存时按开始时间排列。同一天内的阶段不能重叠。</p><div class="form-grid">${field('vacation','假期开始',w.vacation,'datetime-local')}</div><h3>休息日与调休</h3><p class="note">每行一个 YYYY-MM-DD，调休工作日优先。</p><div class="form-grid"><label>法定假日 / 额外休息日<textarea id="holidays">${esc(w.holidays.join('\n'))}</textarea></label><label>调休工作日<textarea id="workdays">${esc(w.workdays.join('\n'))}</textarea></label></div><h3>四季问候</h3>${w.seasons.map((s,i)=>field('season-'+i,['春','夏','秋','冬'][i],s)).join('')}<p id="widgetError" role="alert"></p><div class="modal-foot">${btn(txt.save(),'type="submit"',true)}</div></form>`);
+ const toggles=[['clock','时间轴'],['countdowns','倒计时'],['todo','待办事项']];
+ modal('widgetSettings','组件与作息',`<form id="widgetForm"><div class="form-grid widget-toggles">${toggles.map(([k,n])=>widgetToggle(k,n,w[k])).join('')}</div><div class="section-heading"><h3>每日作息</h3>${btn('＋ 添加阶段','type="button" id="addPhase"')}</div><div id="scheduleRows"></div><p class="note">可自由增删阶段；保存时按开始时间排列。同一天内的阶段不能重叠。</p><div class="form-grid">${field('vacation','假期开始',w.vacation,'datetime-local')}</div><h3>休息日与调休</h3><p class="note">每行一个 YYYY-MM-DD，调休工作日优先。</p><div class="form-grid"><label>法定假日 / 额外休息日<textarea id="holidays">${esc(w.holidays.join('\n'))}</textarea></label><label>调休工作日<textarea id="workdays">${esc(w.workdays.join('\n'))}</textarea></label></div><h3>四季问候</h3>${w.seasons.map((s,i)=>field('season-'+i,['春','夏','秋','冬'][i],s)).join('')}<p id="widgetError" role="alert"></p><div class="modal-foot">${btn(txt.save(),'type="submit"',true)}</div></form>`);
+ for(const [key] of toggles){
+  const input=$('widget-'+key);
+  input.onchange=()=>{
+   const previous=widgetData()[key],next=clone(settings);
+   next.widgets[key]=input.checked;
+   if(writeAll(records,library,profile,{nextSettings:next}))render();else input.checked=!!previous;
+  };
+ }
  const collect=()=>schedule=[...$('scheduleRows').children].map(row=>({name:row.querySelector('[data-part="name"]').value.trim(),start:row.querySelector('[data-part="start"]').value,end:row.querySelector('[data-part="end"]').value}));
  const draw=()=>{$('scheduleRows').innerHTML=schedule.map((p,i)=>`<div class="schedule-edit-row">${field('s-name-'+i,'阶段名称',p.name,'text','required data-part="name"')}${field('s-start-'+i,'开始',p.start,'time','required data-part="start"')}${field('s-end-'+i,'结束',p.end,'time','required data-part="end"')}${btn('删除',`type="button" data-delete-phase="${i}"`)}</div>`).join('')||'<p class="empty-schedule">未设置阶段，可自由安排一天。</p>'};
  // Empty-state paragraphs are not schedule records.
  const collectRows=()=>{if(!$('scheduleRows').querySelector('[data-part]'))schedule=[];else collect()};
  draw();$('addPhase').onclick=()=>{collectRows();schedule.push({name:'新阶段',start:'',end:''});draw()};$('scheduleRows').onclick=e=>{const b=e.target.closest('[data-delete-phase]');if(b){collectRows();schedule.splice(Number(b.dataset.deletePhase),1);draw()}};
- $('widgetForm').onsubmit=e=>{e.preventDefault();try{collectRows();const ordered=schedule.slice().sort((a,b)=>a.start.localeCompare(b.start));ordered.forEach((p,i)=>{if(!p.name||!/^\d{2}:\d{2}$/.test(p.start)||!/^\d{2}:\d{2}$/.test(p.end)||p.start>=p.end||(i&&p.start<ordered[i-1].end))throw Error('请填写阶段名称和有效起止时间，时间不能重叠或跨日')});const next=clone(settings);next.widgets.schedule=ordered;next.widgets.quote=false;for(const k of ['clock','countdowns','todo'])next.widgets[k]=$('widget-'+k).checked;next.widgets.vacation=$('vacation').value;for(const k of ['holidays','workdays']){next.widgets[k]=$(k).value.split(/[\s,，]+/).filter(Boolean);if(next.widgets[k].some(d=>!dateOK(d)))throw Error('日期请使用 YYYY-MM-DD 格式')}next.widgets.seasons=w.seasons.map((s,i)=>$('season-'+i).value);if(writeAll(records,library,profile,{nextSettings:next})){$('widgetSettings').close();render()}}catch(err){$('widgetError').textContent=err.message}};
+  $('widgetForm').onsubmit=e=>{e.preventDefault();try{collectRows();const ordered=schedule.slice().sort((a,b)=>a.start.localeCompare(b.start));ordered.forEach((p,i)=>{if(!p.name||!/^\d{2}:\d{2}$/.test(p.start)||!/^\d{2}:\d{2}$/.test(p.end)||p.start>=p.end||(i&&p.start<ordered[i-1].end))throw Error('请填写阶段名称和有效起止时间，时间不能重叠或跨日')});const next=clone(settings);next.widgets.schedule=ordered;next.widgets.quote=false;next.widgets.vacation=$('vacation').value;for(const k of ['holidays','workdays']){next.widgets[k]=$(k).value.split(/[\s,，]+/).filter(Boolean);if(next.widgets[k].some(d=>!dateOK(d)))throw Error('日期请使用 YYYY-MM-DD 格式')}next.widgets.seasons=w.seasons.map((s,i)=>$('season-'+i).value);if(writeAll(records,library,profile,{nextSettings:next})){$('widgetSettings').close();render()}}catch(err){$('widgetError').textContent=err.message}};
 };
 function applyTheme(){const mode=localStorage.getItem('gaoji.theme.v8')||'auto',dark=mode==='dark'||mode==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light';if($('themeMode'))$('themeMode').value=mode}
 function themeControl(){document.querySelector('#themeControl')?.remove();const box=document.createElement('div');box.id='themeControl';box.innerHTML='<label for="themeMode">外观</label><select id="themeMode" aria-label="昼夜模式"><option value="auto">跟随系统</option><option value="light">☀ 白天</option><option value="dark">☾ 黑夜</option></select>';document.body.append(box);$('themeMode').onchange=()=>{localStorage.setItem('gaoji.theme.v8',$('themeMode').value);applyTheme()};applyTheme()}
@@ -1334,7 +1358,7 @@ const v8Write=writeAll;writeAll=function(rs=records,people=library,p=profile,opt
 'use strict';
 const v9Login=showLogin;showLogin=function(register=false){v9Login(register);const art=document.querySelector('.auth-art');art.querySelector('h2').textContent=T('投个好稿，接收好运。','A good paper deserves good news.','今日も、よい知らせを待ちながら。');art.querySelector('.eyebrow').textContent=T('你的科研伙伴','YOUR RESEARCH COMPANION','あなたの研究パートナー');};
 function countdownTarget(el,now=new Date()){
- if(el.querySelector('#phaseCountdown'))return phaseAt(now).end?.getTime()??Infinity;
+ if(el.querySelector('#phaseCountdown'))return (phaseAt(now).end||nextWorkStart(now,widgetData()))?.getTime()??Infinity;
  if(el.querySelector('#weekendCountdown'))return restTarget(now,widgetData())?.getTime()??Infinity;
  if(el.querySelector('#vacationCountdown'))return widgetData().vacation?new Date(widgetData().vacation).getTime():Infinity;
  const custom=el.querySelector('[data-clock-target]');return custom?new Date(custom.dataset.clockTarget).getTime():Infinity;
@@ -1362,7 +1386,7 @@ const v9Shell=renderShell;renderShell=function(){v9Shell();document.querySelecto
 document.addEventListener('click',e=>{if(e.target instanceof HTMLDialogElement)e.stopImmediatePropagation()},true);
 function fixedDialogActions(){
  document.querySelectorAll('dialog[open] form').forEach(form=>{
-  if(form.querySelector('.editor-top-actions'))return;
+   if(form.hasAttribute('data-keep-actions')||form.querySelector('.editor-top-actions'))return;
   const submit=form.querySelector('button[type="submit"]');if(!submit)return;
   const bar=document.createElement('div');bar.className='editor-top-actions';
   const back=document.createElement('button');back.type='button';back.className='btn';back.textContent='返回';back.onclick=()=>form.closest('dialog').close();
