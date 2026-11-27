@@ -20,12 +20,13 @@ const S={
  major:['大修','Major revision','大幅修正'],
  minor:['小修','Minor revision','軽微な修正'],
  revision:['待返修（类型未注明）','Revision (unspecified)','修正待ち（種別未指定）'],
+ complete:['已完成 · 结果待确认','Complete · decision unconfirmed','完了 · 判定未確認'],
  accept:['已录用','Accepted','採択'],
  reject:['已拒稿','Rejected','不採択'],
  withdraw:['已撤稿','Withdrawn','取り下げ']
 };
 let stateName=s=>S[s]?T(...S[s]):s;
-const CLOSED=['accept','reject','withdraw'],REVISIONS=['major','minor','revision'];
+const FINAL_DECISIONS=['accept','reject','withdraw'],CLOSED=['complete',...FINAL_DECISIONS],REVISIONS=['major','minor','revision'];
 const PERSON_FIELDS=['name','lastName','firstName','email','phone','institution','department','orcid'];
 const dateOK=s=>typeof s==='string'&&(s===''||/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s);
 const safeUrl=s=>{try{return ['https:','http:'].includes(new URL(s).protocol)}catch{return false}};
@@ -173,7 +174,7 @@ const txt={
  remove:()=>T('删除','Delete','削除')
 };
 document.querySelectorAll('dialog').forEach(d=>d.remove());
-for(const id of ['editor','detail','people','batch','authorEdit']){
+ for(const id of ['editor','detail','people','batch','authorEdit','progress']){
  const d=document.createElement('dialog');d.id=id;
  d.innerHTML=`<div class="modal-head"><h2 id="${id}Heading"></h2><button type="button" class="close" data-close="${id}" aria-label="Close">×</button></div><div class="modal-body" id="${id}Body"></div>`;
  document.body.append(d);
@@ -284,7 +285,7 @@ function savePaper(e){
   const q=data.rounds.at(-1);
   if(q&&changed){
    if(['we','ur','rrc'].includes(data.status)&&!q[data.status])q[data.status]=date;
-   if([...REVISIONS,...CLOSED].includes(data.status)){q.decision=data.status;if(!q.decisionDate)q.decisionDate=date}
+    if([...REVISIONS,...FINAL_DECISIONS].includes(data.status)){q.decision=data.status;if(!q.decisionDate)q.decisionDate=date}
    if(data.status==='accept'&&!data.accepted)data.accepted=date;
   }
   if(q&&old&&REVISIONS.includes(old.status)&&['we','ur','rrc'].includes(data.status)&&data.rounds.length<=old.rounds.length)fail('返修后重新提交，请先新增一轮审稿','Add a new round before resubmitting a revision','修正後の再投稿には新しいラウンドを追加してください');
@@ -301,6 +302,14 @@ function editorSystem(r){
  return '';
 }
 function eventText(h){
+ if(h.kind==='progress'&&Array.isArray(h.changes)){
+  const source=h.source==='elsevier'?'Elsevier':T('手动更新','Manual update','手動更新');
+  const changes=h.changes.filter(c=>c&&['status','newRound','invited','agreed','completed'].includes(c.key)).map(c=>{
+   if(c.key==='newRound')return T('开启新一轮','Started a new round','新しいラウンドを開始');
+   return `${c.key==='status'?T('状态','Status','状況'):ROUND_LABELS[c.key]()}：${progressValue(c.key,c.from)} → ${progressValue(c.key,c.to)}`;
+  });
+  return esc([source,...changes].join(' · '));
+ }
  if(h.kind==='status')return esc(`${h.from?stateName(migrateState(h.from))+' → ':''}${stateName(migrateState(h.status))}`);
  if(h.kind==='edit')return T('更新投稿信息','Submission updated','投稿情報を更新');
  return esc(h.text); // User-written and legacy text is preserved, never translated.
@@ -309,6 +318,7 @@ function showDetail(id){
  const r=records.find(r=>r.id===id);if(!r)return;detailId=id;
  const system=editorSystem(r),related=records.filter(x=>x.paperId===r.paperId&&x.id!==r.id);
  modal('detail',T('投稿详情','Submission details','投稿詳細'),`${badge(r)}<h2 class="detail-title">${esc(r.title)}</h2><p>${esc(r.journal)||T('期刊待定','Journal TBD','投稿先未定')}</p><div class="detail-meta">${[['submitted',txt.submitted()],['accepted',txt.accepted()],['number',txt.number()],['updated',txt.updated()]].map(([k,n])=>`<div><small>${n}</small>${esc(r[k])||'—'}</div>`).join('')}</div><h2>${T('作者与署名','Authors','著者')}</h2><div class="author-list">${authorsText(r)||'—'}</div><p class="help">${T('¹ 第一 / 共同第一作者 · ✉ 通讯作者','¹ First / co-first · ✉ Corresponding','¹ 第一／共同第一著者 · ✉ 責任著者')}</p>${r.doi?`<p>DOI: <a href="https://doi.org/${esc(encodeURI(r.doi))}" target="_blank" rel="noopener noreferrer">${esc(r.doi)}</a></p>`:''}<p>${txt.citations()}: ${r.citations??'—'} · ${esc(r.citationSource)||txt.unknown()} · ${esc(r.citationDate)||'—'}</p><div class="actions detail-actions">${btn(txt.edit(),`data-edit="${esc(r.id)}"`,true)}${['reject','withdraw'].includes(r.status)?btn(T('转投','Transfer to another journal','別誌に投稿'),`data-transfer="${esc(r.id)}"`):''}${btn(txt.remove(),`data-delete="${esc(r.id)}"`)}${system?`<a class="btn" href="${esc(system)}" target="_blank" rel="noopener noreferrer">${T('投稿 / 审稿系统','Editorial system','投稿・査読システム')} ↗</a>`:''}</div><section class="panel"><h2>${T('审稿轮次','Review rounds','査読ラウンド')}</h2>${roundsTable(r)}</section><div id="querySection"></div><div class="panel notes">${esc(r.notes)||T('暂无备注','No notes','メモなし')}</div>${related.length?`<section class="panel"><h2>${T('同一论文的其他投稿','Other attempts for this paper','同一論文の他の投稿')}</h2>${related.map(x=>`<button class="linkbtn" data-detail="${esc(x.id)}">${esc(x.journal)} · ${stateName(x.status)} ↗</button>`).join('<br>')}</section>`:''}<h2>${T('进展时间线','Timeline','タイムライン')}</h2><div class="timeline">${[...r.history].reverse().map(h=>`<div class="event"><time>${esc(h.date)}${h.round?' · '+txt.round()+' '+h.round:''}</time><div>${eventText(h)}</div></div>`).join('')}</div>`);
+ $('detailBody').querySelector('.detail-actions').insertAdjacentHTML('afterbegin',progressButton(r));
  renderQuery(r);
 }
 function roundsTable(r){return `<div class="table-wrap"><table><thead><tr>${[txt.round(),T('提交','Submitted','提出'),'WE','UR','RRC',T('决定','Decision','判定'),T('邀请 / 接受 / 完成','Invited / agreed / completed','招待 / 承諾 / 完了')].map(n=>`<th>${n}</th>`).join('')}</tr></thead><tbody>${r.rounds.map(q=>`<tr><td>${q.index}</td>${['submitted','we','ur','rrc'].map(k=>`<td class="nowrap">${esc(q[k])||'—'}</td>`).join('')}<td>${q.decision?stateName(q.decision):'—'}<small>${esc(q.decisionDate)}</small>${q.legacyEnd?`<small>${T('旧版结束日期','Legacy end','旧版終了日')}: ${esc(q.legacyEnd)}</small>`:''}</td><td>${q.invited??'—'} / ${q.agreed??'—'} / ${q.completed??'—'}</td></tr>`).join('')||`<tr><td colspan="7">${T('暂无轮次','No rounds yet','ラウンドなし')}</td></tr>`}</tbody></table></div>`}
@@ -435,25 +445,19 @@ function queryPayload(r,authorId){
 }
 function queryReady(p){return ['manuscriptNumber','lastName','firstName'].every(k=>p[k]?.trim())}
 function queryUrl(p){return queryReady(p)?ELSEVIER_URL+'#gaoji='+encodeURIComponent(JSON.stringify(p)):ELSEVIER_URL}
-// A universal bookmark: one bookmark works for every submission's prefill link.
-function universalFill(){
- if(location.origin!=='https://webapps.elsevier.cn'||!location.pathname.includes('/manuscript-query')){alert('Open the Elsevier manuscript query page first.');return}
- let p;try{p=JSON.parse(decodeURIComponent(location.hash.slice(7)))}catch{}
- if(!p||!['manuscriptNumber','lastName','firstName'].every(k=>typeof p[k]==='string'&&p[k])){alert('Open a prefill link from Dear Editor first.');return}
- const keys=['manuscriptNumber','lastName','firstName'],els=keys.map(k=>document.getElementById(k));
- if(els.some(e=>!e)){alert('Wait for the form to load, then click this bookmark again.');return}
- const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
- els.forEach((el,i)=>{setter.call(el,p[keys[i]]);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))});
- alert(p.lang==='zh'?'资料已填入。请核对、同意条款并自行完成验证码。':p.lang==='ja'?'入力しました。内容と規約を確認し、認証を完了してください。':'Filled. Check the details, consent to the terms and complete verification yourself.');
-}
 function queryHelp(){
- return `<details style="margin-top:18px"><summary>${T('自动填表设置与故障排查','Autofill setup & troubleshooting','自動入力の設定・トラブル対応')}</summary><p class="note">${T('推荐直接安装本地浏览器扩展：Edge / Chrome → 扩展 → 开发者模式 → 加载解压缩扩展，选择当前“稿迹”文件夹。之后从这里打开查询会自动填写。无需运行油猴脚本。','Recommended: install the local browser extension. Edge / Chrome → Extensions → Developer mode → Load unpacked → choose this app’s folder (稿迹). Prefill links then fill automatically; a userscript manager is not needed.','推奨：Edge / Chrome → 拡張機能 → デベロッパーモード → パッケージ化されていない拡張機能を読み込む → このアプリの「稿迹」フォルダを選択。ユーザースクリプト管理は不要です。')}</p><p class="note">${T('已有油猴可更新配套脚本。两种安装方式选一种即可。脚本从页面开始加载时捕获参数，等待表单挂载后填入；页面顶部会显示成功提示。','Alternatively update the included userscript. Use one installation method. The helper captures parameters at page start, waits for the form and shows a success banner.','既存のユーザースクリプトも更新できます。どちらか一方を利用してください。ページ読込開始時に情報を保持し、フォーム出現後に入力して結果を表示します。')}</p><a href="elsevier-autofill.user.js" download>${T('下载更新的用户脚本','Download updated userscript','更新版ユーザースクリプト')}</a><p class="note">${T('不安装扩展：把下面的通用填表链接拖到书签栏。从本软件打开查询页面后，点击书签即可填写；一个书签适用于所有论文。','No extension: drag this universal autofill link to your bookmarks bar. Open a prefill link from this app, then click the bookmark. One bookmark works for every paper.','拡張機能なし：以下をブックマークバーにドラッグ。このアプリから照会を開いてからクリックすると入力されます。全論文で共通です。')}</p><a class="btn" data-bookmark href="${esc('javascript:('+universalFill.toString()+')();void(0)')}">${T('通用自动填表','Accept Me! Autofill','共通自動入力')}</a><p class="note">${T('自动填表只输入编号与姓名。验证码、条款确认和提交由你操作。结果暂不自动回读，查询后请手动更新本地状态。','Autofill only enters the number and names. You handle consent, submission and CAPTCHA. Results are not read back yet; update local statuses manually.','自動入力は番号と氏名のみです。規約確認・送信・CAPTCHAは手動です。結果の自動読込は未実装のため、状況は手動更新してください。')}</p></details>`;
+ return `<details style="margin-top:18px"><summary>${T('查询助手设置','Query helper setup','照会ヘルパーの設定')}</summary>
+ <p class="note">${T('解压 Dear Editor ZIP。在 Chrome / Edge 扩展管理开启开发者模式，选择「加载解压缩的扩展」，选中解压后的 integrations/elsevier 文件夹（含 manifest.json）。','Extract the Dear Editor ZIP. In Chrome / Edge Extensions, enable Developer mode and choose Load unpacked. Select integrations/elsevier, the folder containing manifest.json.','Dear EditorのZIPを解凍します。Chrome / Edgeの拡張機能管理でデベロッパーモードを有効にし、manifest.jsonがある integrations/elsevier を読み込んでください。')}</p>
+ <p class="note">${T('浏览器中若已有旧助手，请先移除或停用，再加载新版扩展。','Remove or disable the old helper before loading this extension.','古いヘルパーは削除または無効化してから読み込んでください。')}</p>
+ <p class="note">${T('条款确认、提交和人机验证仍由你操作。请保留发起查询的 Dear Editor 标签页；有变化时可返回预填，保存前仍需确认。','You still handle consent, submission and verification. Keep the original Dear Editor tab open. Changes can be reviewed and must be confirmed before saving.','規約確認・送信・認証は手動です。元のDear Editorタブを開いたままにしてください。変更は確認後に保存されます。')}</p>
+ <p class="note">${T('不安装扩展也可手动查询并更新进展。','You can still query and update progress manually without the extension.','拡張機能なしでも手動で照会・更新できます。')}</p></details>`;
 }
 function renderQuery(r){
  const people=r.authors.filter(a=>a.corresponding);
  $('querySection').innerHTML=`<section class="panel"><h2>${T('Elsevier 状态查询','Elsevier status query','Elsevier状況照会')}</h2>${select('queryAuthor',T('投稿系统登记的通讯作者','Corresponding author registered in the submission system','投稿システムに登録した責任著者'),people.length?people.map(a=>[a.id,a.name]):[['','—']])}<p id="queryInfo" class="note"></p><div class="actions query-actions"><a id="queryOpen" class="btn primary" target="_blank" rel="noopener noreferrer"></a>${btn(T('复制查询资料','Copy query details','照会情報をコピー'),'id="copyQuery"')}</div>${queryHelp()}</section>`;
  const update=()=>{const p=queryPayload(r,$('queryAuthor').value),ready=queryReady(p);$('queryOpen').href=queryUrl(p);$('queryOpen').textContent=ready?T('打开查询并预填 ↗','Open & prefill ↗','照会を開いて入力 ↗'):T('打开查询网站 ↗','Open query website ↗','照会サイトを開く ↗');$('queryInfo').textContent=ready?`${p.manuscriptNumber} · Last Name: ${p.lastName} · First Name: ${p.firstName}`:T('请补全稿件编号和通讯作者的英文姓、名。','Add the manuscript number and corresponding author’s registered first and last name.','原稿番号と責任著者の登録された姓・名を入力してください。');$('copyQuery').disabled=!ready;$('copyQuery').onclick=()=>copyQuery(p)};
- $('queryAuthor').onchange=update;update();
+  $('queryAuthor').onchange=update;update();
+  $('queryOpen').onclick=e=>{const p=queryPayload(r,$('queryAuthor').value);if(queryReady(p))e.currentTarget.href=progressQueryUrl(r,p)};
 }
 async function copyQuery(p){
  const text=`Manuscript Number: ${p.manuscriptNumber}\nLast Name: ${p.lastName}\nFirst Name: ${p.firstName}`;
@@ -467,7 +471,7 @@ function openBatch(){
   const r=records.find(r=>r.id===row.dataset.batchRow),p=queryPayload(r,row.querySelector('select').value),ready=r.status!=='waiting'&&queryReady(p);
   row.dataset.ready=String(ready);const a=row.querySelector('.batch-link');a.href=queryUrl(p);a.classList.toggle('hidden',!ready);
   row.querySelector('.batch-info').textContent=ready?`${p.manuscriptNumber} · ${p.lastName} ${p.firstName}`:r.status==='waiting'?T('尚未投稿，暂不查询','Not submitted yet; skipped','未投稿のためスキップ'):T('缺少编号或通讯作者英文姓名','Missing number or registered author names','番号または責任著者の英語氏名が不足');
-  a.onclick=()=>batchOpened.add(r.id);
+   a.onclick=()=>{a.href=progressQueryUrl(r,queryPayload(r,row.querySelector('select').value));batchOpened.add(r.id)};
  });
  $('batchList').onchange=update;update();
 }
@@ -476,7 +480,8 @@ function openBatchQueries(all){
  let opened=0,blocked=0;
  for(const row of all?rows:rows.slice(0,1)){
   const w=window.open('about:blank','_blank');if(!w){blocked++;continue}
-  w.opener=null;w.location.href=row.querySelector('.batch-link').href;batchOpened.add(row.dataset.batchRow);opened++;
+   const r=records.find(r=>r.id===row.dataset.batchRow);
+   w.opener=null;w.location.href=progressQueryUrl(r,queryPayload(r,row.querySelector('select').value));batchOpened.add(row.dataset.batchRow);opened++;
  }
  $('batchMessage').textContent=T(`本次打开 ${opened} 篇。${blocked?` ${blocked} 个窗口被浏览器拦截，请允许弹出窗口或逐篇点击链接。`:rows.length?' 每篇请分别完成验证。':' 没有剩余可查询稿件。'}`,`Opened ${opened}. ${blocked?`${blocked} popups blocked; allow popups or click individual links.`:rows.length?'Complete verification on each page.':'No remaining ready queries.'}`,`${opened}件を開きました。${blocked?`${blocked}件がブロックされました。ポップアップを許可するか個別リンクをクリックしてください。`:rows.length?'各ページで認証してください。':'照会可能な残りの投稿はありません。'}`);
 }
@@ -508,7 +513,6 @@ document.addEventListener('click',e=>{
  if(b.hasAttribute('data-query-all'))openBatchQueries(true);
  if(b.hasAttribute('data-query-next'))openBatchQueries(false);
  if(b.dataset.batchEdit){$('batch').close();openEditor(b.dataset.batchEdit)}
- if(b.hasAttribute('data-bookmark')){e.preventDefault();toast(T('请拖入书签栏，在查询页点击书签。','Drag this link to your bookmarks bar; click it on the query page.','ブックマークバーにドラッグし、照会ページでクリックしてください。'))}
 });
 document.addEventListener('change',e=>{
  if(!e.target.matches('[data-language]'))return;
@@ -887,7 +891,7 @@ document.addEventListener('click',e=>{
 
 'use strict';
 // UI upgrades retain the same records/profile/library/settings storage keys.
-const ACTIVE_STATES=['waiting','we','ur','rrc','revision','accept','reject'];
+const ACTIVE_STATES=['waiting','we','ur','rrc','revision','complete','accept','reject'];
 S.revision=['待返修','Revision required','修正待ち'];
 S.withdraw=['历史归档','Archived legacy record','旧記録アーカイブ'];
 const oldMigrate=migrate;
@@ -1606,6 +1610,7 @@ const v15Charge=updateStageCharge;updateStageCharge=function(){
 };
 const v15Card=card;card=function(r){
  const wrap=document.createElement('div');wrap.innerHTML=v15Card(r);const article=wrap.querySelector('.card'),meta=wrap.querySelector('.meta'),footer=wrap.querySelector('.card-bottom');
+ if(footer)footer.insertAdjacentHTML('beforeend',progressButton(r));
  if(meta&&footer){meta.classList.add('submission-date-row');article.insertBefore(meta,footer)}return wrap.innerHTML;
 };
 const v15Shell=renderShell;renderShell=function(){v15Shell();document.querySelector('.aside-bottom').innerHTML=document.querySelector('.aside-bottom').innerHTML.replace('14.0','15.0')};
