@@ -1,13 +1,14 @@
 # 投个好稿 · Dear Editor · まだ査読中
 
-**1.0 · 浏览器本地版科研投稿管理工具**
+**1.0 · 科研投稿管理工具**
+
+**日常使用（Windows）：[下载 ZIP](https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip)，解压后双击 `DearEditor.cmd`。**
 
 ## 在线体验
 
 **[打开测试网页 → huaisong-yang.github.io/dear-editor/](https://huaisong-yang.github.io/dear-editor/)**
 
-首次访问会加载公开演示资料：**用户名 `admin`，密码 `password`**。
-演示修改仅保存在你自己的浏览器，不影响其他访问者。已有账号不会被演示数据覆盖。
+这是静态演示版。全新浏览器环境可用 **`admin` / `password`** 体验。改动只保存在当前浏览器，清除网站数据后可能丢失；它不会连接你的本地数据库，也不会影响其他访问者。
 
 ## 功能
 
@@ -17,22 +18,20 @@
 - 本地多账号、作息进度、倒计时与待办事项。
 - 昼夜模式、备份恢复及15秒操作撤回。
 
-## 使用
+## Windows 本地使用
 
-推荐 **[下载本地版 ZIP](https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip)**，解压后打开 `index.html`。使用同一浏览器和固定文件路径，即可持续读取本机数据。
+1. 安装 Python 3，确保 `py` 或 `python` 命令可用。不需要安装额外的 Python 包。
+2. 下载并解压完整 ZIP，双击 **`DearEditor.cmd`**，不要直接打开 `index.html`。
+3. 在自动打开的 `http://127.0.0.1:8765` 注册或登录，使用期间保持启动窗口打开。本地版不预置演示账号。
 
-通过 GitHub Pages 的 HTTPS 地址访问，或下载完整文件夹后打开 `index.html`。
-**每次保存自动写入本地浏览器，关闭页面后仍然保留，无需每天导出。**
+每次成功保存都写入 `%LOCALAPPDATA%\DearEditor\workspace.sqlite3`。清除 Cookie 或网站数据后，重新登录原账号即可找回记录，不必每天导出。服务仅在本机监听；数据库中的稿件内容未加密，也不会自动上传。换电脑或防范磁盘故障时，仍建议导出备份。
 
-在“备份与设置 → 本地自动保存”中，可以选择一个本地 JSON 文件。之后保存操作会自动同步到该文件。此功能适用于支持 File System Access API 的 Chrome / Edge；浏览器重启后可能需要点击“继续自动备份”重新授权。
-
-账号、稿件不会自动上传或跨设备同步。更换浏览器或访问地址时，可用本地备份恢复。
-
-普通 HTTP 局域网地址不保证密码加密 API 可用，应使用 HTTPS。
+旧网页或直接打开 HTML 时保存的资料，可以从「备份与设置」导入现有 JSON 一次。导入不会替换当前本地账号的用户名和密码。
 
 ## 文件
 
 - `app.js` / `app.css`：当前版本的应用脚本与样式，保留旧数据迁移兼容逻辑。
+- `DearEditor.cmd`、`local_server.py`、`local-mode.js`、`local-memory.js`：Windows 启动和本地数据库功能。
 - `accounts.js`：本地账号存储隔离。
 - `languages.js`：语言与方言文案。
 - `vendor/`：OpenCC 及其许可证。

@@ -11,3 +11,4 @@
 - 预置授权公开的5篇投稿、12位作者及机构、期刊资料；演示登录 admin / password。
 - 明确浏览器自动保存，新增可选的本地 JSON 文件自动备份与恢复授权。
 - 反馈页新增 GitHub 项目、源码下载、问题反馈入口。
+- 新增 Windows 本地数据库版：用 `DearEditor.cmd` 启动，账号与稿件保存在本机 SQLite 数据库；GitHub Pages 仍为静态演示。

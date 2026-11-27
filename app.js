@@ -423,7 +423,8 @@ function renderBackup(){
    if(!confirm(T(`用 ${next.length} 条备份记录替换现有 ${records.length} 条投稿和作者库？请先导出当前备份。`,`Replace ${records.length} current submissions and the author library with ${next.length} backup records? Export a backup first.`,`${records.length}件の投稿と著者庫を${next.length}件のバックアップに置き換えますか？先にバックアップしてください。`)))return;
    const restoreProfile=!profile&&obj.profile&&confirm(T('同时恢复备份中的账号？需使用备份中的密码登录。','Restore the account too? Its existing password will be required.','アカウントも復元しますか？バックアップのパスワードが必要です。'));
    localStorage.setItem('gaoji.before-restore-v3',JSON.stringify({app:'gaoji',version:3,rawRecords:localStorage.getItem(KEY),rawProfile:localStorage.getItem(PROFILE_KEY),rawAuthors:localStorage.getItem(AUTHORS_KEY)}));
-   if(writeAll(next,nextAuthors,restoreProfile?obj.profile:profile,{recover:true,nextSettings:obj.settings||settings})){if(restoreProfile){unlocked=false;showLogin()}else render();toast(T('备份已恢复','Backup restored','復元しました'))}
+    const restored=typeof diskImportData==='function'?diskImportData(next,nextAuthors,obj.profile):{records:next,authors:nextAuthors,profile:restoreProfile?obj.profile:profile};
+    if(writeAll(restored.records,restored.authors,restored.profile,{recover:true,nextSettings:obj.settings||settings})){if(restoreProfile){unlocked=false;showLogin()}else render();toast(T('备份已恢复','Backup restored','復元しました'))}
   }catch(err){alert(err.message)}finally{e.target.value=''}
  };
 }
@@ -1717,7 +1718,7 @@ const fileMirrorBackup=renderBackup;renderBackup=function(){
  $('connectLocalFile')?.addEventListener('click',connectLocalFile);$('resumeLocalFile')?.addEventListener('click',resumeLocalFile);$('disconnectLocalFile')?.addEventListener('click',async()=>{const owner=accountStore.active,state=fileMirrors.get(owner);if(state)state.enabled=false;fileMirrors.delete(owner);try{await storeMirrorHandle(owner,null);mirrorStatus('文件同步已停止；浏览器自动保存继续有效')}catch{mirrorStatus('本次会话已停止，但未能清除文件连接记录')}});restoreMirrorForSettings();
 };
 const projectFeedback=renderFeedback;renderFeedback=function(){
- projectFeedback();const panel=document.createElement('section');panel.className='panel project-links';panel.innerHTML=`<h2>项目源码与本地使用</h2><p class="note">推荐下载到自己的电脑使用：下载 ZIP → 解压 → 打开 index.html。每次保存自动写入本地浏览器，也可在“备份与设置”中连接本地备份文件。</p><div class="actions" style="margin:16px 0"><a class="btn primary" href="https://github.com/Huaisong-Yang/dear-editor" target="_blank" rel="noopener noreferrer">GitHub 项目 ↗</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip">下载本地版 ZIP ↓</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/issues" target="_blank" rel="noopener noreferrer">提交问题与建议 ↗</a></div><p class="note">网页端与本地版属于不同存储空间，首次迁移请导出并恢复备份。保持同一浏览器和文件路径使用。</p>`;$('content').append(panel);
+ projectFeedback();const panel=document.createElement('section');panel.className='panel project-links';panel.innerHTML=`<h2>项目源码与本地使用</h2><p class="note">Windows 日常使用：下载 ZIP → 解压 → 双击 <code>DearEditor.cmd</code>（需要 Python 3）。本地数据库版保存到电脑，清除浏览器数据后重新登录即可。</p><div class="actions" style="margin:16px 0"><a class="btn primary" href="https://github.com/Huaisong-Yang/dear-editor" target="_blank" rel="noopener noreferrer">GitHub 项目 ↗</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/archive/refs/heads/main.zip">下载本地版 ZIP ↓</a><a class="btn" href="https://github.com/Huaisong-Yang/dear-editor/issues" target="_blank" rel="noopener noreferrer">提交问题与建议 ↗</a></div><p class="note">在线网页仅供演示，与本地数据库互不相通。旧记录可用 JSON 备份导入本地版一次。</p>`;$('content').append(panel);
 };
 
 // Public release version is separate from the compatible backup schema version.
