@@ -117,6 +117,16 @@ class BrowserTabLifecycle(unittest.TestCase):
         now += 1
         self.assertTrue(tabs.expired())
 
+    def test_close_beats_initial_ping_but_waits_for_a_save(self):
+        now = 0
+        tabs = BrowserTabs(lambda: now)
+        tabs.update(dict(tab="page", sequence=2, active=False))
+        tabs.update(dict(tab="page", sequence=1, active=True))
+        with tabs.writing():
+            now = tabs.close_grace
+            self.assertFalse(tabs.expired())
+        self.assertTrue(tabs.expired())
+
 
 class LocalWorkspace(unittest.TestCase):
     def test_persistence_and_account_isolation(self):
@@ -147,7 +157,17 @@ class LocalWorkspace(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIn(b"local-mode.js", html)
                 self.assertIn(b"progress.js", html)
+                self.assertIn(b"citations.js", html)
+                self.assertEqual(call("/citations.js")[0], 200)
                 self.assertNotIn(b"demo.js", html)
+                self.assertIn(b"project-feedback.js", html)
+                code, script, _ = call("/project-feedback.js")
+                self.assertEqual(code, 200)
+                project = json.loads(script.decode("ascii").split("=", 1)[1].rstrip(";\n"))
+                self.assertEqual(set(project), {"email", "phone", "wechat", "welcome", "wechatQr", "alipayQr"})
+                self.assertTrue(project["phone"] and project["wechat"])
+                self.assertTrue(all(project[key].startswith("data:image/") for key in ("wechatQr", "alipayQr")))
+                self.assertEqual(call("/demo.js")[0], 404)
                 self.assertEqual(call("/local_server.py")[0], 404)
                 tab = dict(tab="page", sequence=1, active=True)
                 self.assertEqual(call("/api/tab", tab, origin="https://example.org")[0], 403)
