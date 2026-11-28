@@ -162,6 +162,21 @@ html[data-theme=dark] .self-profile-badge{background:#315747;color:#c5f2db}
 .progress-actions{align-items:end;flex-wrap:wrap}
 .progress-actions .field{margin:0}
 .progress-actions a.btn{text-decoration:none}
+.citation-review-table{margin:9px 0 14px}
+.citation-review-table table{min-width:415px}
+.citation-review-table :is(th,td) small{display:block;color:var(--muted)}
+.citation-review-table th[scope=row]{max-width:340px;overflow-wrap:anywhere}
+.citation-review-table input[type=checkbox]{width:auto;accent-color:var(--green)}
+.citation-lookup{text-decoration:none}
+.citation-profile-tools{margin:10px 0}
+:root{--preferences-width:142px;--preferences-right:24px;--preferences-gap:10px}
+#languageControl,.auth-screen>.login-language,#themeControl{top:14px;z-index:55}
+#languageControl,.auth-screen>.login-language{right:var(--preferences-right)}
+#themeControl{right:calc(var(--preferences-right) + var(--preferences-width) + var(--preferences-gap))}
+#languageControl .language-globe,.auth-screen>.login-language,#themeControl .theme-globe{width:var(--preferences-width);height:38px;display:flex;margin:0}
+#languageControl .language-globe select,.auth-screen>.login-language select,#themeControl #themeMode{flex:1;min-width:0;max-width:none;width:100%;border:0;background:transparent;box-shadow:none;font-size:12px;padding:2px 4px;border-radius:6px}
+#languageControl .language-globe svg,.auth-screen>.login-language svg,#themeControl .theme-globe svg{width:20px;height:20px;flex:none}
+@media(max-width:700px){:root{--preferences-width:125px;--preferences-right:12px;--preferences-gap:8px}#languageControl,.auth-screen>.login-language,#themeControl{top:9px}}
 .widget-toggles{gap:10px 16px;margin-block:14px 20px}
 .widget-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;padding:11px 13px;border:1px solid var(--line);border-radius:13px;cursor:pointer;color:var(--ink)}
 .widget-toggle input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}

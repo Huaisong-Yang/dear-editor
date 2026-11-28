@@ -167,20 +167,33 @@
       const note = notice(words('投个好稿：有新进展。返回后可核对差异，确认前不会保存。',
         'Dear Editor: New progress found. Review the differences before saving.',
         '新しい進捗があります。差分を確認するまで保存しません。'), true);
-      const link = document.createElement('a');
-      back.hash = 'de-progress=' + encodeURIComponent(JSON.stringify({ token:p.token, result }));
-      link.href = back.href;
+      const link = document.createElement('button');
+      link.type='button';
       link.textContent = words('确认并返回 →','Review in Dear Editor →','確認して戻る →');
-      link.style.cssText = 'color:white;text-decoration:underline;margin-inline-start:12px;font-weight:bold';
-      link.onclick = e => {
+      link.style.cssText = 'color:white;background:transparent;border:0;text-decoration:underline;margin-inline-start:12px;font:inherit;font-weight:bold;cursor:pointer';
+      const message=document.createElement('span');
+      link.onclick = async e => {
         e.stopPropagation();
         const latest = readResult(p);
         if (JSON.stringify(latest) !== key || Date.now() - pending.capturedAt >= TTL) {
-          e.preventDefault();noticeKey = '';scan();return;
+          noticeKey = '';scan();return;
         }
-        try { sessionStorage.removeItem(STORE); } catch {}
+        link.disabled=true;
+        let delivery;
+        try{delivery=await chrome.runtime.sendMessage({action:'deliver',kind:'progress',token:p.token,base:back.href,result:latest})}catch{}
+        if(delivery?.ok){
+          try {sessionStorage.removeItem(STORE)} catch {}
+          message.textContent=delivery.focused===false
+            ?words(' 已送回，请切到原标签页核对。',' Sent. Switch to the original tab to review.',' 送信済みです。元のタブで確認してください。')
+            :words(' 已送回原标签页。',' Sent to the original tab.',' 元のタブに送信しました。');
+        }else{
+          link.disabled=false;
+          message.textContent=delivery?.reason==='permission'
+            ?words(' 请在扩展详情允许访问 Dear Editor，再重试。',' Allow access to Dear Editor in extension settings and retry.',' 拡張機能の設定でDear Editorへのアクセスを許可してください。')
+            :words(' 未能送回。请刷新 Dear Editor，再从原网页发起一次查询。',' Refresh Dear Editor and start a new query from the original tab.',' Dear Editorを再読み込みし、元のタブで新しく照会してください。');
+        }
       };
-      note.append(link);
+      note.append(link,message);
     }
     resultObserver = new MutationObserver(changes => {
       if (changes.some(c => !c.target.parentElement?.closest('#acceptme-notice') && !c.target.closest?.('#acceptme-notice')) && !resultTimer) {
